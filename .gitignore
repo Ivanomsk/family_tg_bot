@@ -1,0 +1,40 @@
+# Секреты и конфигурация
+.env
+.env.local
+*.env
+
+# Данные бота (конфиденциально!)
+bot_data/
+!bot_data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Логи
+*.log
+bot_data/logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные файлы
+*.tmp
+*.bak
