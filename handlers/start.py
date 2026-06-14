@@ -117,6 +117,28 @@ async def cmd_ping(message: types.Message):
     msg = await message.answer("🏓 <b>Pong!</b>\nБот работает стабильно.", parse_mode="HTML")
     delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
 
+@router.callback_query(F.data == "menu_ping")
+async def menu_ping(callback: types.CallbackQuery):
+    """Кнопка проверки связи"""
+    await callback.answer()
+    
+    msg = await callback.message.answer(
+        "🏓 <b>Pong!</b>\n\n"
+        "✅ Бот работает стабильно\n"
+        "⚡ Время отклика: мгновенно",
+        parse_mode="HTML"
+    )
+    
+    # Автоудаление через 30 секунд (работает и в группе)
+    delete_temp(
+        callback.message.bot, 
+        callback.message.chat.id, 
+        msg.message_id, 
+        user_id=callback.from_user.id, 
+        chat_type=callback.message.chat.type,
+        allow_group=True
+    )
+
 # ==========================================
 # ГЛАВНОЕ МЕНЮ - КНОПКИ
 # ==========================================

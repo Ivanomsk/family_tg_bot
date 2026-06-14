@@ -7,15 +7,24 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
     """Клавиатура главного меню"""
     builder = InlineKeyboardBuilder()
+    
+    # Основные кнопки (4 штуки)
     builder.button(text="🔐 VPN конфиги", callback_data="menu_vpn")
     builder.button(text="🛰 Мои прокси", callback_data="menu_proxy")
     builder.button(text="📖 Справка", callback_data="menu_help")
+    builder.button(text="🏓 Проверка связи", callback_data="menu_ping")
     
+    # Админка (отдельно)
     if is_admin:
         builder.button(text="⚙️ Администрирование", callback_data="menu_admin")
-        
-    builder.adjust(1)
+        # 2 кнопки в ряд, потом 2 кнопки в ряд, потом 1 кнопка
+        builder.adjust(2, 2, 1)
+    else:
+        # 2 кнопки в ряд, потом 2 кнопки в ряд
+        builder.adjust(2, 2)
+    
     return builder
+
 
 def get_back_to_main_menu() -> InlineKeyboardBuilder:
     """Кнопка возврата в главное меню"""
@@ -24,21 +33,22 @@ def get_back_to_main_menu() -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+
 # ==========================================
 # VPN МЕНЮ
 # ==========================================
 
 def get_vpn_list_keyboard(configs: list, username: str) -> InlineKeyboardBuilder:
     """Список VPN конфигов с индикаторами"""
-    builder = InlineKeyboardBuilder()
-    
     from utils.expiry import get_vpn_config_age
+    
+    builder = InlineKeyboardBuilder()
     
     for i, conf in enumerate(configs):
         age = get_vpn_config_age(username, conf)
         
         if age["status"] == "expired":
-            emoji = "❌"
+            emoji = ""
             suffix = " (истёк)"
         elif age["status"] == "expiring_soon":
             emoji = "⚠️"
@@ -58,6 +68,7 @@ def get_vpn_list_keyboard(configs: list, username: str) -> InlineKeyboardBuilder
     builder.adjust(1)
     return builder
 
+
 def get_vpn_empty_keyboard() -> InlineKeyboardBuilder:
     """Меню когда нет VPN конфигов"""
     builder = InlineKeyboardBuilder()
@@ -66,6 +77,7 @@ def get_vpn_empty_keyboard() -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+
 def get_vpn_request_keyboard() -> InlineKeyboardBuilder:
     """Клавиатура запроса VPN (для пользователя)"""
     builder = InlineKeyboardBuilder()
@@ -73,15 +85,16 @@ def get_vpn_request_keyboard() -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+
 # ==========================================
 # ПРОКСИ МЕНЮ
 # ==========================================
 
 def get_proxy_list_keyboard(proxies: list, user_id: int) -> InlineKeyboardBuilder:
     """Список прокси с индикаторами (для нового меню)"""
-    builder = InlineKeyboardBuilder()
-    
     from utils.expiry import get_proxy_age
+    
+    builder = InlineKeyboardBuilder()
     
     for i, proxy in enumerate(proxies):
         age = get_proxy_age(user_id, proxy["name"])
@@ -93,7 +106,7 @@ def get_proxy_list_keyboard(proxies: list, user_id: int) -> InlineKeyboardBuilde
             emoji = "⚠️"
             suffix = f" ({age['days_left']} дн.)"
         else:
-            emoji = ""
+            emoji = "🔹"
             suffix = ""
         
         btn_text = f"{emoji} {proxy['name']}{suffix}"
@@ -104,6 +117,7 @@ def get_proxy_list_keyboard(proxies: list, user_id: int) -> InlineKeyboardBuilde
     builder.adjust(1)
     return builder
 
+
 def get_proxy_list_keyboard_compat(proxies: list) -> InlineKeyboardBuilder:
     """Список прокси без user_id (для обратной совместимости с proxy.py)"""
     builder = InlineKeyboardBuilder()
@@ -111,6 +125,7 @@ def get_proxy_list_keyboard_compat(proxies: list) -> InlineKeyboardBuilder:
         builder.button(text=f"🔹 {proxy['name']}", callback_data=f"proxy_show_{i}")
     builder.adjust(1)
     return builder
+
 
 def get_proxy_detail_keyboard(tg_link: str) -> InlineKeyboardBuilder:
     """Карточка прокси с кнопкой подключения"""
@@ -120,9 +135,11 @@ def get_proxy_detail_keyboard(tg_link: str) -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+
 def get_proxy_card_keyboard(tg_link: str) -> InlineKeyboardBuilder:
     """Алиас для get_proxy_detail_keyboard (для обратной совместимости)"""
     return get_proxy_detail_keyboard(tg_link)
+
 
 def get_proxy_empty_keyboard() -> InlineKeyboardBuilder:
     """Меню когда нет прокси"""
@@ -132,12 +149,14 @@ def get_proxy_empty_keyboard() -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+
 def get_proxy_request_keyboard() -> InlineKeyboardBuilder:
     """Клавиатура запроса прокси (для пользователя)"""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔙 Отмена", callback_data="menu_proxy")
     builder.adjust(1)
     return builder
+
 
 # ==========================================
 # СПРАВКА И АДМИНКА
@@ -152,6 +171,7 @@ def get_help_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+
 # ==========================================
 # АДМИНСКИЕ КЛАВИАТУРЫ (для handlers/vpn.py и proxy.py)
 # ==========================================
@@ -163,6 +183,7 @@ def get_admin_vpn_request_keyboard(user_id: int) -> InlineKeyboardBuilder:
     builder.button(text="❌ Отклонить", callback_data=f"vpn_req_reject_{user_id}")
     builder.adjust(1)
     return builder
+
 
 def get_admin_proxy_request_keyboard(user_id: int) -> InlineKeyboardBuilder:
     """Клавиатура запроса прокси для админа"""
