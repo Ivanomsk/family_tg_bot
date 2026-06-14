@@ -5,22 +5,23 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ==========================================
 
 def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
-    """Клавиатура главного меню"""
+    """Клавиатура главного меню (2 столбца)"""
     builder = InlineKeyboardBuilder()
     
-    # Основные кнопки (4 штуки)
+    # Основные кнопки (4 штуки, по 2 в ряд)
     builder.button(text="🔐 VPN конфиги", callback_data="menu_vpn")
     builder.button(text="🛰 Мои прокси", callback_data="menu_proxy")
     builder.button(text="📖 Справка", callback_data="menu_help")
     builder.button(text="🏓 Проверка связи", callback_data="menu_ping")
     
-    # Админка (отдельно)
+    # Админские кнопки
     if is_admin:
         builder.button(text="⚙️ Администрирование", callback_data="menu_admin")
-        # 2 кнопки в ряд, потом 2 кнопки в ряд, потом 1 кнопка
-        builder.adjust(2, 2, 1)
+        builder.button(text="📢 Опубликовать новость", callback_data="news_start")
+        # 2+2+1+1 = 2 в ряд, 2 в ряд, 1 отдельно, 1 отдельно
+        builder.adjust(2, 2, 1, 1)
     else:
-        # 2 кнопки в ряд, потом 2 кнопки в ряд
+        # 2 в ряд, 2 в ряд
         builder.adjust(2, 2)
     
     return builder
@@ -63,7 +64,7 @@ def get_vpn_list_keyboard(configs: list, username: str) -> InlineKeyboardBuilder
     if configs:
         builder.button(text="📦 Отправить все", callback_data="vpn_send_all")
     
-    builder.button(text=" Запросить новый конфиг", callback_data="vpn_request")
+    builder.button(text="🔄 Запросить новый конфиг", callback_data="vpn_request")
     builder.button(text="🔙 Назад", callback_data="menu_main")
     builder.adjust(1)
     return builder
@@ -91,7 +92,7 @@ def get_vpn_request_keyboard() -> InlineKeyboardBuilder:
 # ==========================================
 
 def get_proxy_list_keyboard(proxies: list, user_id: int) -> InlineKeyboardBuilder:
-    """Список прокси с индикаторами (для нового меню)"""
+    """Список прокси с индикаторами"""
     from utils.expiry import get_proxy_age
     
     builder = InlineKeyboardBuilder()
@@ -113,7 +114,7 @@ def get_proxy_list_keyboard(proxies: list, user_id: int) -> InlineKeyboardBuilde
         builder.button(text=btn_text, callback_data=f"proxy_select_{i}")
     
     builder.button(text="🛰 Запросить новый прокси", callback_data="proxy_request")
-    builder.button(text=" Назад", callback_data="menu_main")
+    builder.button(text="🔙 Назад", callback_data="menu_main")
     builder.adjust(1)
     return builder
 
@@ -168,6 +169,36 @@ def get_help_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
     if is_admin:
         builder.button(text="📊 Показать статистику", callback_data="menu_stats")
     builder.button(text="🔙 Назад", callback_data="menu_main")
+    builder.adjust(1)
+    return builder
+
+
+# ==========================================
+# НОВОСТИ И РЕПОРТЫ
+# ==========================================
+
+def get_news_keyboard() -> InlineKeyboardBuilder:
+    """Клавиатура для подтверждения новости"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить в чат", callback_data="news_confirm")
+    builder.button(text="❌ Отмена", callback_data="news_cancel")
+    builder.adjust(2)
+    return builder
+
+
+def get_problem_report_keyboard() -> InlineKeyboardBuilder:
+    """Клавиатура для отчёта о проблеме"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 Написать о проблеме", callback_data="problem_start")
+    builder.button(text="🔙 Назад к справке", callback_data="menu_help")
+    builder.adjust(1)
+    return builder
+
+
+def get_problem_cancel_keyboard() -> InlineKeyboardBuilder:
+    """Клавиатура отмены репорта/новости"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data="cancel_action")
     builder.adjust(1)
     return builder
 

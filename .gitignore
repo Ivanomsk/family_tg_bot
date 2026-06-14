@@ -30,6 +30,8 @@ build/
 # Логи
 *.log
 bot_data/logs/
+bot_data/logs/bot.log
+bot_data/logs/bot.log.*
 
 # OS
 .DS_Store

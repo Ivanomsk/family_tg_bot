@@ -1,50 +1,13 @@
 import asyncio
-import logging
 import os
-from logging.handlers import RotatingFileHandler
 from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN, ADMIN_IDS
 from handlers import start, vpn, proxy, admin, backup, errors
 from utils.expiry import check_all_vpn_expiry, check_all_proxy_expiry
+from utils.logger import standard_logger, audit_logger
 
-# ============================================
-# НАСТРОЙКА ЛОГИРОВАНИЯ
-# ============================================
-
-# Создаём папку для логов
-LOG_DIR = os.path.join("bot_data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-
-# Формат логов
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Настройка основного логирования (консоль + файл с ротацией)
-logging.basicConfig(
-    level=logging.INFO,
-    format=LOG_FORMAT,
-    handlers=[
-        logging.StreamHandler(),  # Вывод в консоль (для journalctl)
-        RotatingFileHandler(
-            os.path.join(LOG_DIR, "bot.log"),
-            maxBytes=5 * 1024 * 1024,  # Максимум 5 МБ на файл
-            backupCount=3,             # Хранить 3 старых файла
-            encoding="utf-8"
-        )
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Настройка логгера аудита (отдельный файл с ротацией)
-audit_logger = logging.getLogger("audit")
-audit_handler = RotatingFileHandler(
-    os.path.join(LOG_DIR, "audit.log"),
-    maxBytes=2 * 1024 * 1024,  # Максимум 2 МБ
-    backupCount=3,
-    encoding="utf-8"
-)
-audit_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
-audit_logger.addHandler(audit_handler)
-audit_logger.setLevel(logging.INFO)
+# ✅ Используем логгеры из utils.logger (НЕ создаём новые!)
+logger = standard_logger
 
 
 # ============================================
@@ -99,7 +62,19 @@ async def check_all_expiry_on_startup(bot):
             except Exception as e:
                 logger.error(f"Не удалось отправить отчёт админу {admin_id}: {e}")
         
-        logger.info(f"🔔 Отправлен отчёт: VPN {len(vpn_expired)} истекли/{len(vpn_expiring)} истекают, Прокси {len(proxy_expired)} истекли/{len(proxy_expiring)} истекают")
+        logger.info(
+            f"🔔 Отправлен отчёт: VPN {len(vpn_expired)} истекли/{len(vpn_expiring)} истекают, "
+            f"Прокси {len(proxy_expired)} истекли/{len(proxy_expiring)} истекают"
+        )
+        
+        # ✅ AUDIT-ЛОГ АВТОПРОВЕРКИ
+        audit_logger.info(
+            f"ACTION:STARTUP_EXPIRY_CHECK | "
+            f"VPN_EXPIRED:{len(vpn_expired)} | "
+            f"VPN_EXPIRING:{len(vpn_expiring)} | "
+            f"PROXY_EXPIRED:{len(proxy_expired)} | "
+            f"PROXY_EXPIRING:{len(proxy_expiring)}"
+        )
     else:
         logger.info("✅ Все VPN и прокси активны")
 
@@ -121,6 +96,7 @@ async def main():
     dp.include_router(errors.router)
     
     logger.info("🧠 Санитар Дурдома запущен!")
+    audit_logger.info("=== БОТ ЗАПУЩЕН ===")
     
     # Запускаем проверку истёкших VPN и прокси при старте
     asyncio.create_task(check_all_expiry_on_startup(bot))

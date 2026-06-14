@@ -4,10 +4,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import datetime
 import urllib.parse
-import logging
-
 from config import ADMIN_IDS, USER_PROXIES_FILE, PROXY_EXPIRY_DAYS, is_allowed
 from utils.auto_delete import schedule_delete, delete_temp, delete_user, delete_proxy_card, delete_admin
+from utils.logger import standard_logger, audit_logger
 from utils.stats import update_stats
 from utils.expiry import get_proxy_age
 from utils.notifications import send_proxy_expiry_notification
@@ -21,10 +20,11 @@ from keyboards.inline import (
 )
 
 router = Router()
-logger = logging.getLogger(__name__)
+logger = standard_logger
 
 proxy_pending_admin = {}
 my_proxy_cache = {}
+
 
 def format_proxy_card(name: str, server: str, port: int, secret: str) -> str:
     return (
@@ -40,6 +40,7 @@ def format_proxy_card(name: str, server: str, port: int, secret: str) -> str:
         f"4. Нажать Готово\n\n"
         f"💡 <i>Сохрани секрет в заметках!</i>"
     )
+
 
 def format_proxy_card_with_button(name: str, server: str, port: int, secret: str):
     tg_link = f"tg://proxy?server={server}&port={port}&secret={secret}"
@@ -57,6 +58,7 @@ def format_proxy_card_with_button(name: str, server: str, port: int, secret: str
         f"💡 <i>Сохрани секрет в заметках!</i>"
     )
     return text, tg_link
+
 
 @router.message(Command("request_proxy"))
 async def cmd_request_proxy(message: types.Message):
@@ -85,23 +87,47 @@ async def cmd_request_proxy(message: types.Message):
     update_stats(message.from_user, "proxy_request")
     builder = get_proxy_request_keyboard(user_id)
 
+    # ✅ ЛОГИРОВАНИЕ ЗАПРОСА ПРОКСИ (ПЕРЕД отправкой админу)
+    logger.info(
+        f"🛰 ЗАПРОС ПРОКСИ | "
+        f"От: @{username} (ID: {user_id})"
+    )
+    audit_logger.info(
+        f"ACTION:PROXY_REQUEST | "
+        f"USER:{user_id} | "
+        f"USERNAME:{username}"
+    )
+
     request_msg = (
         f"🛰 <b>ЗАПРОС НОВОГО ПРОКСИ</b>\n\n"
         f"👤 @{username}\n📱 ID: {user_id}\n\n"
         f"Ждёт персональный прокси-ключ!"
     )
 
+    sent_count = 0
     for admin_id in ADMIN_IDS:
         try:
             msg = await message.bot.send_message(
                 admin_id, request_msg, reply_markup=builder.as_markup(), parse_mode="HTML"
             )
             proxy_pending_admin[user_id] = {"msg_id": msg.message_id, "chat_id": msg.chat.id, "admin_id": admin_id}
+            sent_count += 1
+            logger.debug(f"Запрос прокси от @{username} отправлен админу {admin_id}")
         except Exception as e:
             logger.error(f"❌ Ошибка отправки запроса прокси админу {admin_id}: {e}")
+            audit_logger.error(
+                f"ACTION:PROXY_REQUEST_SEND_FAILED | "
+                f"USER:{user_id} | "
+                f"ADMIN:{admin_id} | "
+                f"ERROR:{e}"
+            )
 
-    msg = await message.answer("✅ Запрос на прокси отправлен админу!\nОжидай ответа...", parse_mode="HTML")
+    msg = await message.answer(
+        f"✅ Запрос на прокси отправлен админу!\nОжидай ответа...\n💡 Отправлено {sent_count} админу(ам)",
+        parse_mode="HTML"
+    )
     delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+
 
 @router.callback_query(F.data.startswith("proxy_req_issue_"))
 async def proxy_admin_start_issue(callback: types.CallbackQuery, state: FSMContext):
@@ -121,6 +147,7 @@ async def proxy_admin_start_issue(callback: types.CallbackQuery, state: FSMConte
     )
     delete_admin(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=callback.from_user.id, chat_type=callback.message.chat.type)
     await callback.answer()
+
 
 @router.message(ProxyRequest.waiting_for_name, F.text)
 async def proxy_admin_get_name(message: types.Message, state: FSMContext):
@@ -150,6 +177,7 @@ async def proxy_admin_get_name(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
     delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+
 
 @router.message(ProxyRequest.waiting_for_data, F.text)
 async def proxy_admin_save_data(message: types.Message, state: FSMContext):
@@ -236,13 +264,30 @@ async def proxy_admin_save_data(message: types.Message, state: FSMContext):
             
             del proxy_pending_admin[target_user_id]
 
-        logger.info(f"📤 Прокси '{proxy_name}' выдан пользователю ID {target_user_id} админом {admin_id}")
+        # ✅ УЛУЧШЕННОЕ ЛОГИРОВАНИЕ ВЫДАЧИ ПРОКСИ
+        logger.info(
+            f"📤 ПРОКСИ ВЫДАН | "
+            f"Название: '{proxy_name}' | "
+            f"Пользователь: {target_user_id} (@{target_username}) | "
+            f"Админ: {admin_id} | "
+            f"Сервер: {proxy_data['server']}:{proxy_data['port']}"
+        )
+
+        audit_logger.info(
+            f"ACTION:PROXY_ISSUE | "
+            f"ADMIN:{admin_id} | "
+            f"USER:{target_user_id} | "
+            f"USERNAME:{target_username} | "
+            f"PROXY_NAME:{proxy_name} | "
+            f"SERVER:{proxy_data['server']}:{proxy_data['port']}"
+        )
 
     except Exception as e:
         msg = await message.answer(f"❌ Ошибка: {e}")
         delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
 
     await state.clear()
+
 
 @router.callback_query(F.data.startswith("proxy_req_reject_"))
 async def proxy_admin_reject(callback: types.CallbackQuery, state: FSMContext):
@@ -259,6 +304,7 @@ async def proxy_admin_reject(callback: types.CallbackQuery, state: FSMContext):
     if user_id in proxy_pending_admin:
         del proxy_pending_admin[user_id]
     await callback.answer()
+
 
 @router.message(Command("my_proxy"))
 async def cmd_my_proxy(message: types.Message):
@@ -325,6 +371,7 @@ async def cmd_my_proxy(message: types.Message):
     msg = await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
     delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
 
+
 @router.callback_query(F.data.startswith("proxy_show_"))
 async def process_proxy_show(callback: types.CallbackQuery):
     await callback.answer()
@@ -350,6 +397,7 @@ async def process_proxy_show(callback: types.CallbackQuery):
     # ✅ КАРТОЧКА ПРОКСИ: 5 минут
     msg = await callback.message.answer(card_text, reply_markup=builder.as_markup(), parse_mode="HTML", disable_web_page_preview=False)
     delete_proxy_card(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=user_id, chat_type=callback.message.chat.type)
+
 
 @router.callback_query(F.data == "proxy_list")
 async def process_proxy_list(callback: types.CallbackQuery):
