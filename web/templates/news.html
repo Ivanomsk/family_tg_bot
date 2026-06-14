@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Новости{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-megaphone"></i> Публикация новости</h2>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">📢 Отправить новость в общий чат</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST">
+            <div class="mb-3">
+                <label for="news_text" class="form-label">Текст новости</label>
+                <textarea class="form-control" id="news_text" name="news_text" rows="8" required
+                          placeholder="Поддерживается HTML-разметка: <b>жирный</b>, <i>курсив</i>, <code>код</code>"></textarea>
+                <small class="text-muted">
+                    Целевой чат: <code>{{ chat_id }}</code>
+                </small>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-send"></i> Опубликовать
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

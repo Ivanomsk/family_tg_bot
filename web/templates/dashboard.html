@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">📊 Дашборд</h2>
+
+<!-- Статистика -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">
+                    <i class="bi bi-people"></i> Пользователей
+                </h6>
+                <h2 class="card-title">{{ total_users }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">
+                    <i class="bi bi-shield-lock"></i> VPN конфигов
+                </h6>
+                <h2 class="card-title">{{ total_vpn }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">
+                    <i class="bi bi-hdd-network"></i> Прокси
+                </h6>
+                <h2 class="card-title">{{ total_proxies }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card border-danger">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-danger">
+                    <i class="bi bi-exclamation-triangle"></i> Истекло
+                </h6>
+                <h2 class="card-title text-danger">{{ vpn_expired + proxy_expired }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Графики -->
+<div class="row mb-4">
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">📈 Активность пользователей</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="usersChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">🥧 Состояние ключей</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="statusChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Предупреждения -->
+{% if vpn_expired > 0 or proxy_expired > 0 %}
+<div class="alert alert-danger">
+    <h5><i class="bi bi-exclamation-triangle"></i> Требуют внимания</h5>
+    <ul class="mb-0">
+        {% if vpn_expired > 0 %}<li>VPN конфигов истекло: {{ vpn_expired }}</li>{% endif %}
+        {% if proxy_expired > 0 %}<li>Прокси истекло: {{ proxy_expired }}</li>{% endif %}
+    </ul>
+</div>
+{% endif %}
+
+{% if vpn_expiring > 0 or proxy_expiring > 0 %}
+<div class="alert alert-warning">
+    <h5><i class="bi bi-clock"></i> Скоро истекут</h5>
+    <ul class="mb-0">
+        {% if vpn_expiring > 0 %}<li>VPN конфигов истекают: {{ vpn_expiring }}</li>{% endif %}
+        {% if proxy_expiring > 0 %}<li>Прокси истекают: {{ proxy_expiring }}</li>{% endif %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- Real-time логи -->
+<div class="row">
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📝 bot.log <span class="live-indicator"></span></h5>
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleRealtime('bot')">
+                    <i class="bi bi-play-fill" id="bot-toggle-icon"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="realtime-log" id="bot-realtime-log">
+                    {% for line in bot_logs %}
+                    <div>{{ line }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">🔒 audit.log <span class="live-indicator"></span></h5>
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleRealtime('audit')">
+                    <i class="bi bi-play-fill" id="audit-toggle-icon"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="realtime-log" id="audit-realtime-log">
+                    {% for line in audit_logs %}
+                    <div>{{ line }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // График активности пользователей
+    const chartData = {{ chart_data|safe }};
+    const ctx1 = document.getElementById('usersChart').getContext('2d');
+    new Chart(ctx1, {
+        type: 'bar',
+        data: {
+            labels: chartData.users,
+            datasets: [{
+                label: 'Действий',
+                data: chartData.actions,
+                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+    
+    // Круговая диаграмма состояния ключей
+    const ctx2 = document.getElementById('statusChart').getContext('2d');
+    new Chart(ctx2, {
+        type: 'doughnut',
+        data: {
+            labels: ['Активные', 'Истекают', 'Истекли'],
+            datasets: [{
+                data: [
+                    {{ total_vpn + total_proxies - vpn_expiring - proxy_expiring - vpn_expired - proxy_expired }},
+                    {{ vpn_expiring + proxy_expiring }},
+                    {{ vpn_expired + proxy_expired }}
+                ],
+                backgroundColor: [
+                    'rgba(40, 167, 69, 0.7)',
+                    'rgba(255, 193, 7, 0.7)',
+                    'rgba(220, 53, 69, 0.7)'
+                ]
+            }]
+        },
+        options: {
+            responsive: true
+        }
+    });
+    
+    // Real-time логи через SSE
+    let botEventSource = null;
+    let auditEventSource = null;
+    
+    function startRealtime(type) {
+        const url = type === 'bot' ? '/logs/stream' : '/logs/audit-stream';
+        const logDiv = document.getElementById(`${type}-realtime-log`);
+        const icon = document.getElementById(`${type}-toggle-icon`);
+        
+        const eventSource = new EventSource(url);
+        eventSource.onmessage = function(event) {
+            const line = document.createElement('div');
+            line.textContent = event.data;
+            logDiv.appendChild(line);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            
+            // Ограничиваем количество строк
+            while (logDiv.children.length > 200) {
+                logDiv.removeChild(logDiv.firstChild);
+            }
+        };
+        
+        if (type === 'bot') {
+            botEventSource = eventSource;
+            icon.className = 'bi bi-pause-fill';
+        } else {
+            auditEventSource = eventSource;
+            icon.className = 'bi bi-pause-fill';
+        }
+    }
+    
+    function stopRealtime(type) {
+        const icon = document.getElementById(`${type}-toggle-icon`);
+        if (type === 'bot' && botEventSource) {
+            botEventSource.close();
+            botEventSource = null;
+        } else if (type === 'audit' && auditEventSource) {
+            auditEventSource.close();
+            auditEventSource = null;
+        }
+        icon.className = 'bi bi-play-fill';
+    }
+    
+    function toggleRealtime(type) {
+        const icon = document.getElementById(`${type}-toggle-icon`);
+        if (icon.className.includes('play')) {
+            startRealtime(type);
+        } else {
+            stopRealtime(type);
+        }
+    }
+</script>
+{% endblock %}

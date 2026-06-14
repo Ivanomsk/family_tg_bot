@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Вход{% endblock %}
+
+{% block login_content %}
+<div class="container">
+    <div class="row justify-content-center align-items-center" style="min-height: 100vh;">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body p-4">
+                    <h3 class="card-title text-center mb-4">🧠 Санитар Дурдома</h3>
+                    <p class="text-center text-muted mb-4">Админ-панель</p>
+                    
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            {% for category, message in messages %}
+                                <div class="alert alert-{{ category }}">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                    
+                    <!-- Вход по паролю -->
+                    <form method="POST" id="passwordForm">
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Пароль</label>
+                            <input type="password" class="form-control" id="password" name="password" required autofocus>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 mb-3">
+                            <i class="bi bi-key"></i> Войти по паролю
+                        </button>
+                    </form>
+                    
+                    <div class="text-center my-3">
+                        <span class="text-muted">или</span>
+                    </div>
+                    
+                    <!-- Telegram Login Widget -->
+                    {% if bot_username %}
+                    <div id="telegram_login_container" class="text-center">
+                        <script async src="https://telegram.org/js/telegram-widget.js?22"
+                                data-telegram-login="{{ bot_username }}"
+                                data-size="large"
+                                data-onauth="onTelegramAuth(user)"
+                                data-request-access="write"></script>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function onTelegramAuth(user) {
+        fetch('/login/telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(user)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.location.href = data.redirect;
+            } else {
+                alert('Ошибка входа: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Ошибка соединения');
+        });
+    }
+</script>
+{% endblock %}

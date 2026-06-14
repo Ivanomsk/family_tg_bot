@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Подтверждение{% endblock %}
+
+{% block login_content %}
+<div class="container">
+    <div class="row justify-content-center align-items-center" style="min-height: 100vh;">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body p-4">
+                    <h3 class="card-title text-center mb-4">🔐 2FA</h3>
+                    <p class="text-center text-muted mb-4">
+                        Код подтверждения отправлен в Telegram
+                    </p>
+                    
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            {% for category, message in messages %}
+                                <div class="alert alert-{{ category }}">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                    
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label for="code" class="form-label">6-значный код</label>
+                            <input type="text" class="form-control text-center" id="code" name="code" 
+                                   maxlength="6" pattern="[0-9]{6}" required autofocus
+                                   style="font-size: 1.5rem; letter-spacing: 0.5rem;">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Подтвердить</button>
+                    </form>
+                    
+                    <div class="text-center mt-3">
+                        <a href="{{ url_for('login') }}" class="text-muted">← Назад к входу</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

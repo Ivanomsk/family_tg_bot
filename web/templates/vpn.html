@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}VPN конфиги{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>🔐 VPN конфиги</h2>
+</div>
+
+{% if not users_vpn %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i> VPN конфиги пока не загружены
+</div>
+{% else %}
+
+{% for username, configs in users_vpn.items() %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"> {{ username }} ({{ configs|length }} конфигов)</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-dark table-striped">
+                <thead>
+                    <tr>
+                        <th>Название</th>
+                        <th>Размер</th>
+                        <th>Создан</th>
+                        <th>Статус</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for config in configs %}
+                    <tr>
+                        <td>{{ config.name }}</td>
+                        <td>{{ (config.size / 1024)|round(1) }} KB</td>
+                        <td>{{ config.created }}</td>
+                        <td>
+                            {% if config.status == 'expired' %}
+                            <span class="badge bg-danger">Истёк</span>
+                            {% elif config.status == 'expiring_soon' %}
+                            <span class="badge bg-warning text-dark">Истекает ({{ config.days_left }} дн.)</span>
+                            {% else %}
+                            <span class="badge bg-success">Активен</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <form method="POST" action="{{ url_for('delete_vpn_config', username=username, filename=config.name) }}" 
+                                  onsubmit="return confirm('Удалить конфиг {{ config.name }}?');" style="display: inline;">
+                                <button type="submit" class="btn btn-sm btn-danger">
+                                    <i class="bi bi-trash"></i> Удалить
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}

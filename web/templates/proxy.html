@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Прокси{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>🛰 Прокси</h2>
+    <div>
+        <span class="badge bg-primary fs-6">Всего: {{ total_count }}</span>
+        <span class="badge bg-secondary fs-6 ms-2">Пользователей: {{ total_users }}</span>
+    </div>
+</div>
+
+{% if not grouped_proxies %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i> Прокси пока не созданы ни у одного пользователя
+</div>
+{% else %}
+
+{% for user_id, user_data in grouped_proxies.items() %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+             {{ user_data.username }} 
+            <span class="badge bg-info">{{ user_data.count }} прокси</span>
+        </h5>
+        <small class="text-muted">ID: {{ user_id }}</small>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-dark table-striped">
+                <thead>
+                    <tr>
+                        <th>Название</th>
+                        <th>Сервер</th>
+                        <th>Порт</th>
+                        <th>Выдан</th>
+                        <th>Статус</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for proxy in user_data.proxies %}
+                    <tr>
+                        <td><strong>{{ proxy.name }}</strong></td>
+                        <td><code>{{ proxy.server }}</code></td>
+                        <td>{{ proxy.port }}</td>
+                        <td>{{ proxy.issued_at[:10] if proxy.issued_at != 'Unknown' else 'Неизвестно' }}</td>
+                        <td>
+                            {% if proxy.status == 'expired' %}
+                            <span class="badge bg-danger">Истёк</span>
+                            {% elif proxy.status == 'expiring_soon' %}
+                            <span class="badge bg-warning text-dark">Истекает ({{ proxy.days_left }} дн.)</span>
+                            {% else %}
+                            <span class="badge bg-success">Активен</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <form method="POST" action="{{ url_for('delete_proxy', user_id=user_id, proxy_name=proxy.name) }}" 
+                                  onsubmit="return confirm('Удалить прокси {{ proxy.name }} у пользователя {{ user_data.username }}?');" style="display: inline;">
+                                <button type="submit" class="btn btn-sm btn-danger">
+                                    <i class="bi bi-trash"></i> Удалить
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}
