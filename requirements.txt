@@ -1,5 +1,17 @@
-aiogram>=3.0.0
-python-dotenv>=1.0.0
+# Telegram Bot
+aiogram==3.4.1
+aiohttp==3.9.3
+
+# Environment variables
+python-dotenv==1.0.1
+
+# Веб-интерфейс
+flask==3.0.0
+flask-login==0.6.3
+werkzeug==3.0.1
+psutil==5.9.8
+requests==2.31.0
+
 # Тестирование
 pytest==7.4.3
 pytest-asyncio==0.21.1

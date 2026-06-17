@@ -40,3 +40,21 @@ Thumbs.db
 # Временные файлы
 *.tmp
 *.bak
+
+# Docker
+.dockerignore
+
+# Тесты и покрытие
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# IDE
+.vscode/
+.idea/
+
+# Временные файлы
+*.tmp
+*.bak
