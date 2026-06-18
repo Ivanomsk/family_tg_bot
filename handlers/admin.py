@@ -336,3 +336,139 @@ async def cmd_help(message: types.Message):
         delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
     else:
         delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+
+# ============================================================================
+# ПУБЛИКАЦИЯ ОБНОВЛЕНИЙ AMNEZIA
+# ============================================================================
+
+@router.message(Command("news_amnezia"), F.from_user.id.in_(ADMIN_IDS))
+async def cmd_news_amnezia(message: types.Message):
+    """Публикация универсального шаблона Amnezia"""
+    from web.amnezia_config import UNIVERSAL_TEMPLATE, AMNEZIA_LINKS, VERSION_CONFLICT_WARNING
+    from keyboards.inline import get_news_confirm_keyboard
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    links_text = UNIVERSAL_TEMPLATE["links_section"].format(**AMNEZIA_LINKS)
+    text = (
+        f"{UNIVERSAL_TEMPLATE['title']}\n\n"
+        f"{UNIVERSAL_TEMPLATE['body']}\n\n"
+        f"{links_text}\n\n"
+        f"{VERSION_CONFLICT_WARNING}"
+    )
+    
+    keyboard = InlineKeyboardBuilder()
+    for row in UNIVERSAL_TEMPLATE["buttons"]:
+        for btn in row:
+            keyboard.button(text=btn["text"], url=AMNEZIA_LINKS[btn["url"]])
+        keyboard.adjust(len(row))
+    
+    await message.answer(
+        text,
+        reply_markup=keyboard.as_markup(),
+        parse_mode="HTML",
+        disable_web_page_preview=False
+    )
+    
+    confirm_kb = get_news_confirm_keyboard()
+    msg = await message.answer(
+        "📢 Опубликовать это сообщение в общий чат?",
+        reply_markup=confirm_kb
+    )
+    delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+
+
+@router.callback_query(F.data == "news_confirm_publish")
+async def process_news_confirm(callback: types.CallbackQuery):
+    """Подтверждение публикации новости Amnezia"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer(" Доступ запрещён", show_alert=True)
+        return
+    
+    from web.amnezia_config import UNIVERSAL_TEMPLATE, AMNEZIA_LINKS, VERSION_CONFLICT_WARNING
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    links_text = UNIVERSAL_TEMPLATE["links_section"].format(**AMNEZIA_LINKS)
+    text = (
+        f"{UNIVERSAL_TEMPLATE['title']}\n\n"
+        f"{UNIVERSAL_TEMPLATE['body']}\n\n"
+        f"{links_text}\n\n"
+        f"{VERSION_CONFLICT_WARNING}"
+    )
+    
+    keyboard = InlineKeyboardBuilder()
+    for row in UNIVERSAL_TEMPLATE["buttons"]:
+        for btn in row:
+            keyboard.button(text=btn["text"], url=AMNEZIA_LINKS[btn["url"]])
+        keyboard.adjust(len(row))
+    
+    try:
+        await callback.bot.send_message(
+            chat_id=ALLOWED_CHAT_ID,
+            text=text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML",
+            disable_web_page_preview=False
+        )
+        await callback.message.delete()
+        msg = await callback.message.answer("✅ Новость опубликована!")
+        delete_admin(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=callback.from_user.id, chat_type=callback.message.chat.type)
+        log_admin_action(callback.from_user.id, "NEWS_AMNEZIA_PUBLISH", "Публикация обновления Amnezia")
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+
+@router.callback_query(F.data == "news_cancel")
+async def process_news_cancel(callback: types.CallbackQuery):
+    """Отмена публикации новости"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer(" Доступ запрещён", show_alert=True)
+        return
+    
+    await callback.message.delete()
+    msg = await callback.message.answer("❌ Публикация отменена")
+    delete_admin(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=callback.from_user.id, chat_type=callback.message.chat.type)
+
+# ============================================================================
+# КНОПКА AMNEZIA В МЕНЮ
+# ============================================================================
+
+@router.callback_query(F.data == "menu_amnezia_update")
+async def process_amnezia_update(callback: types.CallbackQuery):
+    """Обработка кнопки Amnezia VPN из меню"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer(" Доступ запрещён", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    # Вызываем функцию публикации Amnezia
+    from web.amnezia_config import UNIVERSAL_TEMPLATE, AMNEZIA_LINKS, VERSION_CONFLICT_WARNING
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    links_text = UNIVERSAL_TEMPLATE["links_section"].format(**AMNEZIA_LINKS)
+    text = (
+        f"{UNIVERSAL_TEMPLATE['title']}\n\n"
+        f"{UNIVERSAL_TEMPLATE['body']}\n\n"
+        f"{links_text}\n\n"
+        f"{VERSION_CONFLICT_WARNING}"
+    )
+    
+    keyboard = InlineKeyboardBuilder()
+    for row in UNIVERSAL_TEMPLATE["buttons"]:
+        for btn in row:
+            keyboard.button(text=btn["text"], url=AMNEZIA_LINKS[btn["url"]])
+        keyboard.adjust(len(row))
+    
+    await callback.message.answer(
+        text,
+        reply_markup=keyboard.as_markup(),
+        parse_mode="HTML",
+        disable_web_page_preview=False
+    )
+    
+    confirm_kb = get_news_confirm_keyboard()
+    msg = await callback.message.answer(
+        "📢 Опубликовать это сообщение в общий чат?",
+        reply_markup=confirm_kb
+    )
+    delete_admin(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=callback.from_user.id, chat_type=callback.message.chat.type)

@@ -18,8 +18,9 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
     if is_admin:
         builder.button(text="⚙️ Администрирование", callback_data="menu_admin")
         builder.button(text="📢 Опубликовать новость", callback_data="news_start")
-        # 2+2+1+1 = 2 в ряд, 2 в ряд, 1 отдельно, 1 отдельно
-        builder.adjust(2, 2, 1, 1)
+        builder.button(text="🔄 Amnezia VPN", callback_data="menu_amnezia_update")  # НОВАЯ КНОПКА
+        # 2+2+2+1 = 2 в ряд, 2 в ряд, 2 в ряд, 1 отдельно
+        builder.adjust(2, 2, 2, 1)
     else:
         # 2 в ряд, 2 в ряд
         builder.adjust(2, 2)
@@ -202,6 +203,13 @@ def get_problem_cancel_keyboard() -> InlineKeyboardBuilder:
     builder.adjust(1)
     return builder
 
+def get_news_confirm_keyboard():
+    """Клавиатура подтверждения публикации новости Amnezia"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="✅ Опубликовать", callback_data="news_confirm_publish")
+    keyboard.button(text="❌ Отмена", callback_data="news_cancel")
+    keyboard.adjust(2)
+    return keyboard.as_markup()
 
 # ==========================================
 # АДМИНСКИЕ КЛАВИАТУРЫ (для handlers/vpn.py и proxy.py)

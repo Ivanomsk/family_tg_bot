@@ -5,24 +5,336 @@
 {% block content %}
 <h2 class="mb-4"><i class="bi bi-megaphone"></i> Публикация новости</h2>
 
-<div class="card">
+<!-- Быстрый шаблон Amnezia -->
+<div class="card mb-4">
     <div class="card-header">
-        <h5 class="mb-0">📢 Отправить новость в общий чат</h5>
+        <h5 class="mb-0">⚡ Быстрый шаблон — Обновление Amnezia VPN</h5>
     </div>
     <div class="card-body">
-        <form method="POST">
+        <p class="text-muted mb-3">
+            Публикация обновления для всех платформ сразу: 
+            <strong>ПК</strong> (Windows, macOS, Linux) + 
+            <strong>Мобильные</strong> (Android, iOS).
+            <br>Включено предупреждение о конфликте версий.
+        </p>
+        <button type="button" class="btn btn-primary w-100 py-3" onclick="loadTemplate('universal')">
+            <i class="bi bi-arrow-repeat"></i> 🔄 Обновление Amnezia (все платформы)
+            <br><small>Windows, macOS, Linux, Android, iOS + 8 inline-кнопок</small>
+        </button>
+    </div>
+</div>
+
+<!-- Основная форма публикации -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">📝 Публикация в общий чат</h5>
+        <span class="badge bg-info">Чат: {{ chat_id }}</span>
+    </div>
+    <div class="card-body">
+        <form id="newsForm">
             <div class="mb-3">
-                <label for="news_text" class="form-label">Текст новости</label>
-                <textarea class="form-control" id="news_text" name="news_text" rows="8" required
-                          placeholder="Поддерживается HTML-разметка: <b>жирный</b>, <i>курсив</i>, <code>код</code>"></textarea>
+                <label for="news_text" class="form-label">
+                    <i class="bi bi-pencil"></i> Текст новости
+                </label>
+                <textarea class="form-control" id="news_text" name="news_text" rows="10" required
+                          placeholder="Введите текст новости. Поддерживается HTML-разметка: <b>жирный</b>, <i>курсив</i>, <code>код</code>, <a href='...'>ссылки</a>"></textarea>
                 <small class="text-muted">
-                    Целевой чат: <code>{{ chat_id }}</code>
+                    Поддерживается HTML-разметка. Длина: <span id="charCount">0</span> символов (лимит 4096)
                 </small>
             </div>
-            <button type="submit" class="btn btn-primary">
-                <i class="bi bi-send"></i> Опубликовать
-            </button>
+            
+            <!-- Inline кнопки -->
+            <div class="mb-3">
+                <label for="buttons_json" class="form-label">
+                    <i class="bi bi-grid-3x3"></i> Inline-кнопки (JSON, опционально)
+                </label>
+                <textarea class="form-control font-monospace" id="buttons_json" name="buttons_json" rows="6"
+                          placeholder='[
+  [{"text": "Google Play", "url": "https://play.google.com/..."}],
+  [{"text": "App Store", "url": "https://apps.apple.com/..."}]
+]'></textarea>
+                <small class="text-muted">
+                    Формат: массив массивов кнопок. Каждая кнопка: <code>{"text": "Название", "url": "https://..."}</code>
+                </small>
+                <div id="buttonsPreview" class="mt-2"></div>
+            </div>
+            
+            <div class="d-grid gap-2 d-md-flex">
+                <button type="button" class="btn btn-primary" onclick="publishNews(false)">
+                    <i class="bi bi-send"></i> Опубликовать (без кнопок)
+                </button>
+                <button type="button" class="btn btn-success" onclick="publishNews(true)">
+                    <i class="bi bi-grid-3x3"></i> Опубликовать с кнопками
+                </button>
+                <button type="button" class="btn btn-outline-secondary" onclick="previewMessage()">
+                    <i class="bi bi-eye"></i> Предпросмотр
+                </button>
+                <button type="button" class="btn btn-outline-danger" onclick="clearForm()">
+                    <i class="bi bi-x-circle"></i> Очистить
+                </button>
+            </div>
         </form>
     </div>
 </div>
+
+<!-- Модальное окно предпросмотра -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content" style="background-color: #2d2d2d;">
+            <div class="modal-header">
+                <h5 class="modal-title"> Предпросмотр (как в Telegram)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="previewContent" style="
+                    background: #17212b; 
+                    color: #fff; 
+                    padding: 15px; 
+                    border-radius: 10px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                "></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Спиннер загрузки -->
+<div id="loadingSpinner" class="text-center mt-3" style="display: none;">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Загрузка...</span>
+    </div>
+    <p class="mt-2 text-muted">Публикация...</p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentTemplate = null;
+
+async function loadTemplate(type) {
+    try {
+        const response = await fetch('/news/templates');
+        const templates = await response.json();
+        const template = templates[type];
+        
+        if (!template) {
+            alert('Шаблон не найден');
+            return;
+        }
+        
+        document.getElementById('news_text').value = template.text;
+        document.getElementById('buttons_json').value = JSON.stringify(template.buttons, null, 2);
+        currentTemplate = template.name;
+        
+        updateCharCount();
+        updateButtonsPreview();
+        
+        showAlert('success', `Шаблон "${template.name}" загружен. Отредактируйте текст при необходимости и нажмите "Опубликовать с кнопками".`);
+        
+    } catch (error) {
+        console.error('Ошибка загрузки шаблона:', error);
+        showAlert('danger', 'Ошибка загрузки шаблона: ' + error.message);
+    }
+}
+
+async function publishNews(withButtons) {
+    const text = document.getElementById('news_text').value.trim();
+    const buttonsJson = document.getElementById('buttons_json').value.trim();
+    
+    if (!text) {
+        showAlert('warning', 'Введите текст новости');
+        return;
+    }
+    
+    if (text.length > 4096) {
+        showAlert('danger', 'Текст превышает лимит Telegram (4096 символов)');
+        return;
+    }
+    
+    let buttons = [];
+    if (withButtons) {
+        if (!buttonsJson) {
+            showAlert('warning', 'Добавьте inline-кнопки или используйте "Опубликовать без кнопок"');
+            return;
+        }
+        try {
+            buttons = JSON.parse(buttonsJson);
+            if (!Array.isArray(buttons)) {
+                throw new Error('Должен быть массив строк');
+            }
+            for (const row of buttons) {
+                if (!Array.isArray(row)) {
+                    throw new Error('Каждая строка должна быть массивом');
+                }
+                for (const btn of row) {
+                    if (!btn.text || !btn.url) {
+                        throw new Error('Каждая кнопка должна иметь text и url');
+                    }
+                    if (!btn.url.startsWith('http://') && !btn.url.startsWith('https://') && !btn.url.startsWith('tg://')) {
+                        throw new Error(`URL "${btn.url}" должен начинаться с http://, https:// или tg://`);
+                    }
+                }
+            }
+        } catch (error) {
+            showAlert('danger', 'Неверный формат JSON кнопок: ' + error.message);
+            return;
+        }
+    }
+    
+    document.getElementById('loadingSpinner').style.display = 'block';
+    
+    try {
+        const endpoint = withButtons ? '/news/publish-with-buttons' : '/news';
+        const body = withButtons 
+            ? JSON.stringify({ text, buttons })
+            : new URLSearchParams({ news_text: text });
+        
+        const headers = withButtons 
+            ? { 'Content-Type': 'application/json' }
+            : { 'Content-Type': 'application/x-www-form-urlencoded' };
+        
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: headers,
+            body: body
+        });
+        
+        const result = withButtons ? await response.json() : { success: true };
+        
+        if (response.ok && result.success !== false) {
+            showAlert('success', result.message || 'Новость опубликована!');
+            setTimeout(() => {
+                if (confirm('Очистить форму для новой публикации?')) {
+                    clearForm();
+                }
+            }, 1500);
+        } else {
+            showAlert('danger', 'Ошибка: ' + (result.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        showAlert('danger', 'Ошибка соединения: ' + error.message);
+    } finally {
+        document.getElementById('loadingSpinner').style.display = 'none';
+    }
+}
+
+function previewMessage() {
+    const text = document.getElementById('news_text').value.trim();
+    const buttonsJson = document.getElementById('buttons_json').value.trim();
+    
+    if (!text) {
+        showAlert('warning', 'Введите текст для предпросмотра');
+        return;
+    }
+    
+    let html = `<div style="white-space: pre-wrap; line-height: 1.5;">${escapeHtml(text)}</div>`;
+    
+    if (buttonsJson) {
+        try {
+            const buttons = JSON.parse(buttonsJson);
+            html += '<div style="margin-top: 15px;">';
+            for (const row of buttons) {
+                html += '<div style="display: flex; gap: 5px; margin-bottom: 5px;">';
+                for (const btn of row) {
+                    html += `<a href="${escapeHtml(btn.url)}" target="_blank" style="
+                        flex: 1;
+                        background: #5288c1;
+                        color: white;
+                        padding: 8px 12px;
+                        border-radius: 6px;
+                        text-align: center;
+                        text-decoration: none;
+                        font-size: 14px;
+                        font-weight: 500;
+                    ">${escapeHtml(btn.text)}</a>`;
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        } catch (e) {
+            html += '<div style="color: #ff6b6b; margin-top: 10px;">⚠️ Неверный формат кнопок</div>';
+        }
+    }
+    
+    document.getElementById('previewContent').innerHTML = html;
+    new bootstrap.Modal(document.getElementById('previewModal')).show();
+}
+
+function clearForm() {
+    document.getElementById('news_text').value = '';
+    document.getElementById('buttons_json').value = '';
+    document.getElementById('buttonsPreview').innerHTML = '';
+    currentTemplate = null;
+    updateCharCount();
+}
+
+function updateCharCount() {
+    const count = document.getElementById('news_text').value.length;
+    const counter = document.getElementById('charCount');
+    counter.textContent = count;
+    counter.style.color = count > 4096 ? '#ff6b6b' : count > 3500 ? '#ffc107' : '#28a745';
+}
+
+function updateButtonsPreview() {
+    const buttonsJson = document.getElementById('buttons_json').value.trim();
+    const preview = document.getElementById('buttonsPreview');
+    
+    if (!buttonsJson) {
+        preview.innerHTML = '';
+        return;
+    }
+    
+    try {
+        const buttons = JSON.parse(buttonsJson);
+        let totalBtns = 0;
+        buttons.forEach(row => totalBtns += row.length);
+        
+        preview.innerHTML = `
+            <div class="alert alert-info py-2 mb-0">
+                <i class="bi bi-check-circle"></i> 
+                Корректный JSON: ${buttons.length} строк, ${totalBtns} кнопок
+            </div>
+        `;
+    } catch (e) {
+        preview.innerHTML = `
+            <div class="alert alert-danger py-2 mb-0">
+                <i class="bi bi-exclamation-triangle"></i> 
+                Ошибка JSON: ${e.message}
+            </div>
+        `;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showAlert(type, message) {
+    const alertHtml = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    const container = document.querySelector('main');
+    const existingAlerts = container.querySelectorAll('.alert');
+    existingAlerts.forEach(a => a.remove());
+    container.insertAdjacentHTML('afterbegin', alertHtml);
+    
+    setTimeout(() => {
+        const alert = container.querySelector('.alert');
+        if (alert) {
+            alert.classList.remove('show');
+            setTimeout(() => alert.remove(), 150);
+        }
+    }, 5000);
+}
+
+document.getElementById('news_text').addEventListener('input', updateCharCount);
+document.getElementById('buttons_json').addEventListener('input', updateButtonsPreview);
+
+updateCharCount();
+</script>
 {% endblock %}

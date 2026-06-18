@@ -9,7 +9,7 @@ import psutil
 import requests
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, Response, stream_with_context
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, Response, stream_with_context, session
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.utils import secure_filename
 
@@ -20,6 +20,7 @@ from config import ADMIN_IDS, USER_PROXIES_FILE, VPN_DIR, BACKUP_DIR, ALLOWED_CH
 from database.storage import load_json, save_json
 from utils.logger import standard_logger, audit_logger
 from utils.expiry import check_all_vpn_expiry, check_all_proxy_expiry, get_vpn_config_age, get_proxy_age
+from web.amnezia_config import AMNEZIA_LINKS, VERSION_CONFLICT_WARNING, UNIVERSAL_TEMPLATE
 
 # ==========================================
 # ЧТЕНИЕ .env
@@ -56,13 +57,9 @@ login_manager.login_view = 'login'
 # ХРАНИЛИЩА В ПАМЯТИ
 # ==========================================
 
-# 2FA коды: {user_id: {'code': '123456', 'expires': timestamp}}
 two_factor_codes = {}
-
-# Журнал входов
 login_history_file = 'bot_data/web_logins.json'
 
-# Telegram Login проверка
 def check_telegram_auth(data: dict) -> bool:
     """Проверяет подпись Telegram Login Widget"""
     if not BOT_TOKEN:
@@ -78,7 +75,6 @@ def check_telegram_auth(data: dict) -> bool:
     if hash_value != check_hash:
         return False
     
-    # Проверка времени (не старше 1 дня)
     auth_date = int(data.get('auth_date', 0))
     if time.time() - auth_date > 86400:
         return False
@@ -100,7 +96,6 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    # Формат: "admin" или "tg_123456789"
     if user_id.startswith('tg_'):
         tg_id = user_id[3:]
         return User(tg_id, username=f"TG:{tg_id}", is_telegram=True)
@@ -119,23 +114,8 @@ def record_login(user_id, method, ip, success=True):
         'time': datetime.now().isoformat(),
         'success': success
     })
-    # Храним последние 500 записей
     logins = logins[-500:]
     save_json(login_history_file, logins)
-
-def require_2fa():
-    """Декоратор для страниц, требующих 2FA"""
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            # Если 2FA уже пройдена в этой сессии — пропускаем
-            if '2fa_passed' in session:
-                return f(*args, **kwargs)
-            return redirect(url_for('verify_2fa'))
-        return decorated_function
-    return decorator
-
-from flask import session
 
 # ==========================================
 # МАРШРУТЫ АУТЕНТИФИКАЦИИ
@@ -151,16 +131,14 @@ def login():
             record_login('admin', 'password', request.remote_addr, True)
             audit_logger.info(f"ACTION:WEB_LOGIN | USER:admin | IP:{request.remote_addr} | METHOD:PASSWORD")
             
-            # Если включена 2FA — отправляем код в Telegram
             if ENV_VARS.get('WEB_2FA_ENABLED', 'false').lower() == 'true':
                 code = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
                 two_factor_codes['admin'] = {
                     'code': code,
-                    'expires': time.time() + 300  # 5 минут
+                    'expires': time.time() + 300
                 }
                 session['pending_2fa'] = 'admin'
                 
-                # Отправляем код в Telegram админу
                 try:
                     admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
                     if admin_id:
@@ -186,8 +164,7 @@ def login():
             audit_logger.warning(f"ACTION:WEB_LOGIN_FAILED | IP:{request.remote_addr}")
             flash('Неверный пароль', 'danger')
     
-    return render_template('login.html', 
-                          bot_username=ENV_VARS.get('TELEGRAM_BOT_USERNAME', ''))
+    return render_template('login.html', bot_username=ENV_VARS.get('TELEGRAM_BOT_USERNAME', ''))
 
 @app.route('/login/telegram', methods=['POST'])
 def login_telegram():
@@ -201,7 +178,6 @@ def login_telegram():
     user_id = data.get('id')
     username = data.get('username') or f"TG:{user_id}"
     
-    # Проверяем, что это админ или модератор
     if int(user_id) not in ADMIN_IDS:
         audit_logger.warning(f"ACTION:WEB_TELEGRAM_LOGIN_UNAUTHORIZED | USER:{user_id} | IP:{request.remote_addr}")
         return jsonify({'success': False, 'error': 'Доступ запрещён'}), 403
@@ -276,13 +252,11 @@ def dashboard():
             if os.path.isdir(user_path):
                 total_vpn += len([f for f in os.listdir(user_path) if f.endswith('.vpn')])
     
-    # Данные для графиков
     chart_data = {
         'users': [data.get('username', f"ID:{uid}")[:10] for uid, data in list(stats.items())[:7]],
         'actions': [sum(data.get('actions', {}).values()) for uid, data in list(stats.items())[:7]]
     }
     
-    # Последние логи
     bot_logs = []
     audit_logs = []
     
@@ -440,13 +414,12 @@ def delete_proxy(user_id, proxy_name):
     return redirect(url_for('proxy_management'))
 
 # ==========================================
-# ПРОСМОТР ПРОБЛЕМ (/report)
+# ПРОСМОТР ПРОБЛЕМ
 # ==========================================
 
 @app.route('/problems')
 @login_required
 def problems():
-    """Просмотр сообщений о проблемах"""
     problems_list = load_json('bot_data/problems.json', [])
     return render_template('problems.html', problems=problems_list)
 
@@ -499,6 +472,96 @@ def news():
     
     return render_template('news.html', chat_id=ALLOWED_CHAT_ID)
 
+@app.route('/news/templates')
+@login_required
+def news_templates():
+    """Возвращает шаблоны для публикации"""
+    def build_text(template):
+        links_text = template["links_section"].format(**AMNEZIA_LINKS)
+        return (
+            f"{template['title']}\n\n"
+            f"{template['body']}\n\n"
+            f"{links_text}\n\n"
+            f"{VERSION_CONFLICT_WARNING}"
+        )
+    
+    def build_buttons(template):
+        buttons = []
+        for row in template["buttons"]:
+            btn_row = []
+            for btn in row:
+                btn_row.append({
+                    "text": btn["text"],
+                    "url": AMNEZIA_LINKS[btn["url"]]
+                })
+            buttons.append(btn_row)
+        return buttons
+    
+    return jsonify({
+        "universal": {
+            "text": build_text(UNIVERSAL_TEMPLATE),
+            "buttons": build_buttons(UNIVERSAL_TEMPLATE),
+            "name": "🔄 Обновление Amnezia (все платформы)"
+        }
+    })
+
+@app.route('/news/publish-with-buttons', methods=['POST'])
+@login_required
+def news_publish_with_buttons():
+    """Публикация новости с inline-кнопками"""
+    data = request.get_json()
+    
+    news_text = data.get('text', '').strip()
+    buttons = data.get('buttons', [])
+    
+    if not news_text:
+        return jsonify({'success': False, 'error': 'Текст новости пустой'}), 400
+    
+    if not ALLOWED_CHAT_ID or not BOT_TOKEN:
+        return jsonify({'success': False, 'error': 'ALLOWED_CHAT_ID или BOT_TOKEN не настроены'}), 400
+    
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        
+        reply_markup = None
+        if buttons:
+            reply_markup = {"inline_keyboard": buttons}
+        
+        payload = {
+            'chat_id': ALLOWED_CHAT_ID,
+            'text': news_text,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': False
+        }
+        
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
+        
+        response = requests.post(url, json=payload, timeout=10)
+        result = response.json()
+        
+        if result.get('ok'):
+            msg_id = result['result']['message_id']
+            buttons_count = sum(len(row) for row in buttons) if buttons else 0
+            audit_logger.info(
+                f"ACTION:NEWS_PUBLISH_WITH_BUTTONS | ADMIN:WEB | "
+                f"CHAT:{ALLOWED_CHAT_ID} | MSG_ID:{msg_id} | BUTTONS:{buttons_count}"
+            )
+            return jsonify({
+                'success': True, 
+                'message': f'Новость опубликована с {buttons_count} кнопками!',
+                'message_id': msg_id
+            })
+        else:
+            error = result.get('description', 'Неизвестная ошибка')
+            return jsonify({'success': False, 'error': f'Ошибка Telegram: {error}'}), 400
+            
+    except requests.exceptions.Timeout:
+        return jsonify({'success': False, 'error': 'Таймаут соединения с Telegram'}), 504
+    except Exception as e:
+        audit_logger.error(f"ACTION:NEWS_PUBLISH_ERROR | ERROR:{e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ==========================================
 # СИСТЕМНЫЙ МОНИТОРИНГ
 # ==========================================
@@ -506,22 +569,15 @@ def news():
 @app.route('/system')
 @login_required
 def system():
-    """Мониторинг системы"""
-    # CPU
     cpu_percent = psutil.cpu_percent(interval=1)
     cpu_count = psutil.cpu_count()
     
-    # RAM
     memory = psutil.virtual_memory()
-    
-    # Disk
     disk = psutil.disk_usage('/')
     
-    # Uptime
     boot_time = datetime.fromtimestamp(psutil.boot_time())
     uptime = datetime.now() - boot_time
     
-    # Process info
     process_info = []
     for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
         try:
@@ -530,7 +586,6 @@ def system():
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     
-    # Bot status
     bot_running = False
     web_running = True
     try:
@@ -559,7 +614,6 @@ def system():
 @app.route('/backups')
 @login_required
 def backups():
-    """Список бэкапов"""
     backup_list = []
     
     if os.path.exists(BACKUP_DIR):
@@ -581,7 +635,6 @@ def backups():
 @app.route('/backups/download/<filename>')
 @login_required
 def download_backup(filename):
-    """Скачивание бэкапа"""
     if '..' in filename or '/' in filename:
         flash('Недопустимое имя файла', 'danger')
         return redirect(url_for('backups'))
@@ -602,7 +655,6 @@ def download_backup(filename):
 @app.route('/backups/create', methods=['POST'])
 @login_required
 def create_backup():
-    """Создание бэкапа вручную"""
     import subprocess
     
     try:
@@ -612,7 +664,6 @@ def create_backup():
         
         os.makedirs(BACKUP_DIR, exist_ok=True)
         
-        # Создаём архив
         result = subprocess.run([
             'tar', '-czf', backup_path,
             '-C', '/opt/durdom-bot',
@@ -637,7 +688,6 @@ def create_backup():
 @app.route('/users')
 @login_required
 def users():
-    """Список пользователей"""
     stats = load_json('bot_data/stats.json', {})
     user_proxies = load_json(USER_PROXIES_FILE, {})
     
@@ -665,7 +715,7 @@ def users():
     return render_template('users.html', users=users_list)
 
 # ==========================================
-# ПРОСМОТР ЛОГОВ (с SSE для real-time)
+# ПРОСМОТР ЛОГОВ
 # ==========================================
 
 @app.route('/logs')
@@ -764,9 +814,8 @@ def clear_logs():
 @app.route('/logins')
 @login_required
 def logins():
-    """Журнал входов"""
     logins_list = load_json(login_history_file, [])
-    logins_list.reverse()  # Новые сверху
+    logins_list.reverse()
     return render_template('logins.html', logins=logins_list)
 
 # ==========================================
