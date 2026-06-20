@@ -41,6 +41,9 @@ WG_CONFIG_EXPIRY_DAYS = 30
 # Путь к локальной БД пользователей
 VPN_DB_PATH = Path('/opt/durdom-bot/bot_data/vpn_users.json')
 VPN_DB_PATH.parent.mkdir(exist_ok=True)
+# Для совместимости с другими модулями
+VPN_CONFIGS_DIR = Path('/opt/durdom-bot/bot_data/vpn_configs')
+BACKUP_DIR = Path('/opt/durdom-bot/bot_data/backups')
 
 
 def get_ssh():
@@ -175,9 +178,8 @@ AllowedIPs = {client_ip}/32
         
         # Сохраняем в локальную БД
         db = load_vpn_db()
-        expiry_date = datetime.now()
         from datetime import timedelta
-        expiry_date = expiry_date + timedelta(days=WG_CONFIG_EXPIRY_DAYS)
+        expiry_date = datetime.now() + timedelta(days=WG_CONFIG_EXPIRY_DAYS)
         
         db[client_public_key] = {
             'username': username,
@@ -286,3 +288,210 @@ def test_ssh_connection():
         }
     except Exception as e:
         return {'error': str(e)}
+
+
+# ============================================
+# ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ПРОДЛЕНИЯ И АВТОУДАЛЕНИЯ
+# ============================================
+
+import shutil
+from datetime import timedelta
+from pathlib import Path
+from config import BACKUP_DIR, VPN_DIR
+from utils.logger import standard_logger, audit_logger
+
+logger = standard_logger
+
+# Алиас для совместимости с handlers/extend.py
+VPN_USERS_FILE = VPN_DB_PATH
+
+def extend_vpn_config(user_id: int, config_hash: str, days: int = 30):
+    """
+    Продлевает VPN-конфиг на N дней БЕЗ пересоздания.
+    
+    Args:
+        user_id: Telegram ID пользователя
+        config_hash: Хеш (public_key) конфига
+        days: На сколько дней продлить (по умолчанию 30)
+    
+    Returns:
+        (success: bool, result: str или datetime)
+    """
+    db = load_vpn_db()
+    
+    if config_hash not in db:
+        return False, "Конфиг не найден"
+    
+    config_data = db[config_hash]
+    
+    # Проверяем, принадлежит ли конфиг этому пользователю
+    if config_data.get('user_id') != user_id:
+        return False, "Это не ваш конфиг"
+    
+    # Проверяем, активен ли конфиг
+    if not config_data.get('active', True):
+        return False, "Конфиг неактивен (был отозван)"
+    
+    # ✅ Если бессрочный — не продлеваем
+    if config_data.get('permanent', False):
+        return False, "Бессрочный конфиг не требует продления"
+    
+    expires_at_str = config_data.get('expires_at')
+    if not expires_at_str:
+        return False, "Дата истечения не найдена"
+    
+    try:
+        current_expires = datetime.fromisoformat(expires_at_str)
+    except ValueError:
+        return False, "Некорректный формат даты"
+    
+    # Если конфиг уже истёк — продлеваем с сегодняшнего дня
+    if current_expires < datetime.now():
+        new_expires = datetime.now() + timedelta(days=days)
+    else:
+        new_expires = current_expires + timedelta(days=days)
+    
+    # Обновляем дату
+    db[config_hash]['expires_at'] = new_expires.isoformat()
+    save_vpn_db(db)
+    
+    logger.info(f"🔄 Продлен конфиг {config_hash[:20]}... для пользователя {user_id} до {new_expires.isoformat()}")
+    audit_logger.info(
+        f"ACTION:EXTEND_VPN | USER:{user_id} | "
+        f"CONFIG:{config_hash[:20]}... | OLD:{expires_at_str} | NEW:{new_expires.isoformat()}"
+    )
+    
+    return True, new_expires
+
+
+def delete_expired_vpn():
+    """
+    Помечает истекшие VPN-конфиги как неактивные и перемещает их папки в backups.
+    ✅ Пропускает бессрочные конфиги.
+    
+    Returns:
+        int: Количество удалённых конфигов
+    """
+    db = load_vpn_db()
+    now = datetime.now()
+    deleted_count = 0
+    updated = False
+    
+    for config_hash, config_data in list(db.items()):
+        # Пропускаем уже неактивные
+        if not config_data.get('active', True):
+            continue
+        
+        # ✅ ПРОПУСКАЕМ БЕССРОЧНЫЕ
+        if config_data.get('permanent', False):
+            continue
+        
+        expires_at_str = config_data.get('expires_at')
+        if not expires_at_str:
+            continue
+        
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str)
+            if expires_at < now:
+                # Помечаем как неактивный
+                db[config_hash]['active'] = False
+                db[config_hash]['expired_at'] = now.isoformat()
+                updated = True
+                deleted_count += 1
+                
+                username = config_data.get('username')
+                if username:
+                    user_dir = Path(VPN_DIR) / username
+                    if user_dir.exists():
+                        backup_name = f"expired_{username}_{now.strftime('%Y%m%d_%H%M%S')}"
+                        backup_path = Path(BACKUP_DIR) / backup_name
+                        shutil.move(str(user_dir), str(backup_path))
+                        logger.info(f"🗑️ Конфиг {username} перемещен в backups/{backup_name}")
+                
+                audit_logger.info(
+                    f"ACTION:DELETE_EXPIRED_VPN | USER:{config_data.get('user_id')} | "
+                    f"CONFIG:{config_hash[:20]}... | EXPIRED_AT:{expires_at_str}"
+                )
+                
+        except ValueError:
+            continue
+    
+    if updated:
+        save_vpn_db(db)
+        logger.info(f"🗑️ Всего удалено {deleted_count} истекших VPN-конфигов")
+    
+    return deleted_count
+
+
+def get_user_vpn_configs(user_id: int) -> list:
+    """
+    Возвращает список активных конфигов пользователя.
+    
+    Returns:
+        list: Список словарей с полями: hash, username, expires_at, days_left, permanent
+    """
+    db = load_vpn_db()
+    now = datetime.now()
+    result = []
+    
+    for config_hash, config_data in db.items():
+        if config_data.get('user_id') == user_id and config_data.get('active', True):
+            expires_at_str = config_data.get('expires_at')
+            days_left = None
+            is_permanent = config_data.get('permanent', False)
+            if expires_at_str and not is_permanent:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at_str)
+                    days_left = (expires_at - now).days
+                except ValueError:
+                    pass
+            
+            result.append({
+                'hash': config_hash,
+                'username': config_data.get('username', 'unknown'),
+                'expires_at': expires_at_str,
+                'days_left': days_left,
+                'ip': config_data.get('ip'),
+                'issued_at': config_data.get('issued_at'),
+                'permanent': is_permanent
+            })
+    
+    return result
+
+
+def get_expired_vpn_list() -> list:
+    """
+    Возвращает список истекших конфигов (без бессрочных).
+    
+    Returns:
+        list: Список словарей с полями: hash, username, user_id, expires_at
+    """
+    db = load_vpn_db()
+    now = datetime.now()
+    result = []
+    
+    for config_hash, config_data in db.items():
+        if not config_data.get('active', True):
+            continue
+        
+        # ✅ ПРОПУСКАЕМ БЕССРОЧНЫЕ
+        if config_data.get('permanent', False):
+            continue
+        
+        expires_at_str = config_data.get('expires_at')
+        if not expires_at_str:
+            continue
+        
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str)
+            if expires_at < now:
+                result.append({
+                    'hash': config_hash,
+                    'username': config_data.get('username'),
+                    'user_id': config_data.get('user_id'),
+                    'expires_at': expires_at_str
+                })
+        except ValueError:
+            continue
+    
+    return result

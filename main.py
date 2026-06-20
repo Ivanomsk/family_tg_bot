@@ -3,10 +3,12 @@ import os
 from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN, ADMIN_IDS
 from handlers import start, vpn, proxy, admin, backup, errors, vpn_admin
+from handlers import extend
 from utils.expiry import check_all_vpn_expiry, check_all_proxy_expiry
 from utils.logger import standard_logger, audit_logger
+from utils.notifications import check_and_send_personal_notifications
+from utils.vpn_manager import delete_expired_vpn
 
-# ✅ Используем логгеры из utils.logger (НЕ создаём новые!)
 logger = standard_logger
 
 
@@ -16,7 +18,6 @@ logger = standard_logger
 
 async def check_all_expiry_on_startup(bot):
     """Проверяет истёкшие VPN и прокси при запуске и уведомляет админа"""
-    # Небольшая задержка, чтобы бот успел запуститься
     await asyncio.sleep(5)
     
     try:
@@ -67,7 +68,6 @@ async def check_all_expiry_on_startup(bot):
             f"Прокси {len(proxy_expired)} истекли/{len(proxy_expiring)} истекают"
         )
         
-        # ✅ AUDIT-ЛОГ АВТОПРОВЕРКИ
         audit_logger.info(
             f"ACTION:STARTUP_EXPIRY_CHECK | "
             f"VPN_EXPIRED:{len(vpn_expired)} | "
@@ -80,6 +80,35 @@ async def check_all_expiry_on_startup(bot):
 
 
 # ============================================
+# ФОНОВЫЕ ЗАДАЧИ
+# ============================================
+
+async def scheduled_tasks(bot):
+    """Фоновые задачи: удаление истекших VPN и отправка уведомлений"""
+    await asyncio.sleep(10)
+    logger.info("🔄 Фоновая задача scheduled_tasks запущена!")
+    
+    while True:
+        try:
+            logger.info("🔍 Начинаем проверку истекших VPN...")
+            deleted = delete_expired_vpn()
+            if deleted > 0:
+                logger.info(f"🗑️ Удалено {deleted} истекших VPN")
+            
+            logger.info("🔍 Начинаем проверку уведомлений...")
+            sent = await check_and_send_personal_notifications(bot)
+            if sent > 0:
+                logger.info(f"🔔 Отправлено {sent} личных уведомлений")
+            else:
+                logger.info("📭 Нет конфигов для уведомлений")
+            
+            await asyncio.sleep(21600)
+        except Exception as e:
+            logger.error(f"❌ Ошибка в scheduled_tasks: {e}")
+            await asyncio.sleep(3600)
+
+
+# ============================================
 # ГЛАВНАЯ ФУНКЦИЯ
 # ============================================
 
@@ -89,18 +118,22 @@ async def main():
     
     # Регистрация роутеров
     dp.include_router(start.router)
-    dp.include_router(vpn_admin.router)  # ← ПЕРЕНОСИМ СЮДА (перед vpn.router)
+    dp.include_router(vpn_admin.router)
     dp.include_router(vpn.router)
     dp.include_router(proxy.router)
     dp.include_router(admin.router)
     dp.include_router(backup.router)
     dp.include_router(errors.router)
+    dp.include_router(extend.router)
     
     logger.info("🧠 Санитар Дурдома запущен!")
     audit_logger.info("=== БОТ ЗАПУЩЕН ===")
     
     # Запускаем проверку истёкших VPN и прокси при старте
     asyncio.create_task(check_all_expiry_on_startup(bot))
+    
+    # Запускаем фоновые задачи
+    asyncio.create_task(scheduled_tasks(bot))
     
     await dp.start_polling(bot)
 

@@ -38,3 +38,9 @@ def is_allowed(message) -> bool:
 
 # Максимальное количество хранимых бэкапов
 MAX_BACKUPS = int(os.getenv("MAX_BACKUPS", "5"))
+
+# ============================================
+# АЛИАСЫ ДЛЯ НОВЫХ МОДУЛЕЙ
+# ============================================
+BOT_DATA_DIR = DATA_DIR
+VPN_CONFIGS_DIR = VPN_DIR
