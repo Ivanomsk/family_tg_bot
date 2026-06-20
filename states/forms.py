@@ -15,3 +15,7 @@ class NewsRequest(StatesGroup):
 class ProblemReport(StatesGroup):
     """Состояния для сообщения о проблеме"""
     waiting_for_text = State()
+
+class VpnIssue(StatesGroup):
+    """Состояния для выдачи VPN конфига"""
+    waiting_username = State()

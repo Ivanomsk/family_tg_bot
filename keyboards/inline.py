@@ -18,7 +18,8 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
     if is_admin:
         builder.button(text="⚙️ Администрирование", callback_data="menu_admin")
         builder.button(text="📢 Опубликовать новость", callback_data="news_start")
-        builder.button(text="🔄 Amnezia VPN", callback_data="menu_amnezia_update")  # НОВАЯ КНОПКА
+        builder.button(text="🔐 Управление VPN", callback_data="vpn_admin_menu")
+        builder.button(text="🔄 Amnezia VPN", callback_data="menu_amnezia_update")
         # 2+2+2+1 = 2 в ряд, 2 в ряд, 2 в ряд, 1 отдельно
         builder.adjust(2, 2, 2, 1)
     else:
@@ -216,9 +217,9 @@ def get_news_confirm_keyboard():
 # ==========================================
 
 def get_admin_vpn_request_keyboard(user_id: int) -> InlineKeyboardBuilder:
-    """Клавиатура запроса VPN для админа"""
+    """Клавиатура запроса VPN для админа - автоматическая генерация"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="📤 Загрузить файл", callback_data=f"vpn_req_upload_{user_id}")
+    builder.button(text="✅ Выпустить автоматически", callback_data=f"vpn_req_auto_{user_id}")
     builder.button(text="❌ Отклонить", callback_data=f"vpn_req_reject_{user_id}")
     builder.adjust(1)
     return builder

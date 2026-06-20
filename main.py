@@ -2,7 +2,7 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN, ADMIN_IDS
-from handlers import start, vpn, proxy, admin, backup, errors
+from handlers import start, vpn, proxy, admin, backup, errors, vpn_admin
 from utils.expiry import check_all_vpn_expiry, check_all_proxy_expiry
 from utils.logger import standard_logger, audit_logger
 
@@ -89,6 +89,7 @@ async def main():
     
     # Регистрация роутеров
     dp.include_router(start.router)
+    dp.include_router(vpn_admin.router)  # ← ПЕРЕНОСИМ СЮДА (перед vpn.router)
     dp.include_router(vpn.router)
     dp.include_router(proxy.router)
     dp.include_router(admin.router)

@@ -436,14 +436,16 @@ async def process_news_cancel(callback: types.CallbackQuery):
 async def process_amnezia_update(callback: types.CallbackQuery):
     """Обработка кнопки Amnezia VPN из меню"""
     if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer(" Доступ запрещён", show_alert=True)
+        await callback.answer("⛔️ Доступ запрещён", show_alert=True)
         return
     
     await callback.answer()
     
     # Вызываем функцию публикации Amnezia
     from web.amnezia_config import UNIVERSAL_TEMPLATE, AMNEZIA_LINKS, VERSION_CONFLICT_WARNING
+    from keyboards.inline import get_news_confirm_keyboard
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from config import ALLOWED_CHAT_ID
     
     links_text = UNIVERSAL_TEMPLATE["links_section"].format(**AMNEZIA_LINKS)
     text = (

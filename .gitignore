@@ -2,6 +2,7 @@
 .env
 .env.local
 *.env
+ssh_keys/
 
 # Данные бота (конфиденциально!)
 bot_data/

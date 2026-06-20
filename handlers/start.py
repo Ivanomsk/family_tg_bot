@@ -764,28 +764,131 @@ async def vpn_send_all(callback: types.CallbackQuery):
     await msg.delete()
     await callback.message.answer(f"✅ Отправлено: {sent}/{len(configs)}")
 
-
 @router.callback_query(F.data == "vpn_request")
 async def vpn_request(callback: types.CallbackQuery, state: FSMContext):
     """Запрос нового VPN конфига"""
     if not await require_private_chat(callback, "запрос VPN"):
         return
-    
+
     await callback.answer()
     await state.set_state(ConfigRequest.waiting_for_device)
-    
+
     text = (
         "🔄 <b>Запрос нового VPN конфига</b>\n\n"
         "Для какого устройства нужен конфиг?\n\n"
         "Напиши название (например: iPhone, MacBook, Android)\n\n"
         "Или нажми кнопку отмены."
     )
-    
+
     await callback.message.edit_text(
         text,
         reply_markup=get_vpn_request_keyboard().as_markup(),
         parse_mode="HTML"
     )
+
+@router.callback_query(F.data.startswith("vpn_req_auto_"))
+async def vpn_req_auto_issue(callback: types.CallbackQuery):
+    """Автоматическая генерация VPN конфига по запросу пользователя"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔️ Доступ запрещён", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[-1])
+    await callback.answer("⏳ Генерирую конфиг...")
+    
+    # ✅ ПОЛУЧАЕМ DEVICE NAME ИЗ ХРАНИЛИЩА
+    from database.storage import load_json, save_json
+    requests = load_json("bot_data/vpn_requests.json", {})
+    request_data = requests.get(str(user_id), {})
+    
+    device = request_data.get("device", "device")  # iPhone, MacBook и т.д.
+    username = request_data.get("username", f"user_{user_id}")
+    
+    # Очищаем username от @ и заменяем пробелы в device
+    username = username.lstrip('@')
+    device_safe = re.sub(r'[^\w\-]', '_', device)  # iPhone → iPhone, My Phone → My_Phone
+    
+    # Формируем имя файла: iPhone_20260620_120008.vpn
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    config_filename = f"{device_safe}_{timestamp}.vpn"
+    
+    await callback.message.edit_text(f"⏳ Генерирую VPN конфиг для {device}...")
+    
+    # Импортируем функцию генерации
+    from utils.vpn_manager import issue_vpn_config
+    
+    # Генерируем конфиг (используем username для WireGuard - это техническое имя)
+    result = issue_vpn_config(username, user_id=user_id)
+    
+    if 'error' in result:
+        await callback.message.edit_text(f"❌ Ошибка генерации: {result['error']}")
+        return
+    
+    # Сохраняем конфиг в папку пользователя
+    user_dir = get_user_dir(username)
+    config_path = os.path.join(user_dir, config_filename)
+    
+    with open(config_path, 'w') as f:
+        f.write(result['config_string'])
+    
+    # ✅ ОТПРАВЛЯЕМ С ПРАВИЛЬНЫМ ИМЕНЕМ ФАЙЛА (.vpn)
+    try:
+        await callback.bot.send_document(
+            chat_id=user_id,
+            document=FSInputFile(config_path, filename=config_filename),  # iPhone_20260620_120008.vpn
+            caption=(
+                f"✅ <b>Ваш VPN конфиг готов!</b>\n\n"
+                f"📱 Устройство: {device}\n"
+                f"📍 IP: <code>{result['ip']}</code>\n"
+                f"⏰ Срок: до {result['expires_at']}\n\n"
+                f"💡 Импортируйте файл в Amnezia VPN"
+            ),
+            parse_mode="HTML"
+        )
+        
+        await callback.message.edit_text(
+            f"✅ <b>Конфиг выдан!</b>\n\n"
+            f"👤 Пользователь: @{username}\n"
+            f"📱 Устройство: {device}\n"
+            f"📍 IP: {result['ip']}\n"
+            f"⏰ Истекает: {result['expires_at']}\n\n"
+            f"📁 Сохранён: <code>{config_filename}</code>",
+            parse_mode="HTML"
+        )
+        
+        # Логируем
+        from utils.logger import audit_logger
+        audit_logger.info(f"✅ VPN_ISSUED_AUTO | USER:{user_id} | DEVICE:{device} | IP:{result['ip']}")
+        
+        # ✅ УДАЛЯЕМ ЗАПРОС ИЗ ХРАНИЛИЩА
+        del requests[str(user_id)]
+        save_json("bot_data/vpn_requests.json", requests)
+        
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Ошибка отправки пользователю: {e}")
+        logger.error(f"Ошибка отправки конфига пользователю {user_id}: {e}")
+
+
+@router.callback_query(F.data.startswith("vpn_req_reject_"))
+async def vpn_req_reject(callback: types.CallbackQuery):
+    """Отклонить запрос VPN"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔️ Доступ запрещён", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[-1])
+    
+    try:
+        await callback.bot.send_message(
+            chat_id=user_id,
+            text="❌ <b>Запрос VPN отклонён</b>\n\nОбратитесь к администратору для получения информации.",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+    
+    await callback.message.edit_text("❌ Запрос отклонён")
+    await callback.answer()
 
 
 # ==========================================
@@ -895,8 +998,15 @@ async def process_vpn_device(message: types.Message, state: FSMContext):
     user = message.from_user
     username = user.username or f"ID:{user.id}"
     
-    from handlers.vpn import pending_requests
-    pending_requests[user.id] = {"device": device}
+    # ✅ СОХРАНЯЕМ ЗАПРОС С DEVICE NAME
+    from database.storage import load_json, save_json
+    requests = load_json("bot_data/vpn_requests.json", {})
+    requests[str(user.id)] = {
+        "username": username,
+        "device": device,
+        "timestamp": datetime.now().isoformat()
+    }
+    save_json("bot_data/vpn_requests.json", requests)
     
     request_msg = (
         f"🔔 <b>НОВЫЙ ЗАПРОС VPN</b>\n\n"
@@ -921,7 +1031,6 @@ async def process_vpn_device(message: types.Message, state: FSMContext):
         reply_markup=get_back_to_main_menu().as_markup(),
         parse_mode="HTML"
     )
-    await state.clear()
 
 
 # ==========================================
