@@ -44,34 +44,45 @@ def get_vpn_config_age(username: str, filename: str) -> dict:
 
 
 def check_all_vpn_expiry():
+    """Проверяет все VPN конфиги на истечение (из vpn_users.json)"""
+    from utils.vpn_manager import load_vpn_db
+    db = load_vpn_db()
     expired = []
     expiring = []
+    now = datetime.now()
     
-    if not os.path.exists(VPN_DIR):
-        return expired, expiring
-    
-    for user_dir in os.listdir(VPN_DIR):
-        user_path = os.path.join(VPN_DIR, user_dir)
-        if not os.path.isdir(user_path):
+    for public_key, data in db.items():
+        username = data.get('username', 'unknown')
+        active = data.get('active', True)
+        permanent = data.get('permanent', False)
+        expires_at_str = data.get('expires_at')
+        
+        # Пропускаем неактивные и бессрочные
+        if not active:
+            continue
+        if permanent:
+            continue
+        if not expires_at_str:
             continue
         
-        for filename in os.listdir(user_path):
-            if not filename.endswith('.vpn'):
-                continue
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str)
+            days_left = (expires_at - now).days
             
-            age = get_vpn_config_age(user_dir, filename)
-            if age["status"] == "expired":
+            if days_left < 0:
                 expired.append({
-                    "username": user_dir,
-                    "filename": filename,
-                    "days_left": age["days_left"]
+                    'username': username,
+                    'filename': f"{username}.vpn",
+                    'days_left': days_left
                 })
-            elif age["status"] == "expiring_soon":
+            elif days_left <= 3:
                 expiring.append({
-                    "username": user_dir,
-                    "filename": filename,
-                    "days_left": age["days_left"]
+                    'username': username,
+                    'filename': f"{username}.vpn",
+                    'days_left': days_left
                 })
+        except ValueError:
+            continue
     
     return expired, expiring
 
@@ -113,36 +124,49 @@ def get_proxy_age(user_id: int, proxy_name: str) -> dict:
 
 
 def check_all_proxy_expiry():
+    """Проверяет все прокси на истечение (из user_proxies.json)"""
+    from database.storage import load_json
+    user_proxies = load_json(USER_PROXIES_FILE, {})
     expired = []
     expiring = []
-    
-    user_proxies = load_json(USER_PROXIES_FILE, {})
+    now = datetime.now()
     
     for user_id_str, data in user_proxies.items():
         user_id = int(user_id_str)
         proxies = data.get("proxies", [])
         
         for proxy in proxies:
-            if proxy.get('permanent', False):
-                continue
-            
             proxy_name = proxy.get("name")
             if not proxy_name:
                 continue
             
-            age = get_proxy_age(user_id, proxy_name)
-            if age["status"] == "expired":
-                expired.append({
-                    "user_id": user_id,
-                    "proxy_name": proxy_name,
-                    "days_left": age["days_left"]
-                })
-            elif age["status"] == "expiring_soon":
-                expiring.append({
-                    "user_id": user_id,
-                    "proxy_name": proxy_name,
-                    "days_left": age["days_left"]
-                })
+            # Пропускаем бессрочные
+            if proxy.get('permanent', False):
+                continue
+            
+            issued_at = proxy.get("issued_at")
+            if not issued_at:
+                continue
+            
+            try:
+                issued_date = datetime.fromisoformat(issued_at)
+                expires_date = issued_date + timedelta(days=PROXY_EXPIRY_DAYS)
+                days_left = (expires_date - now).days
+                
+                if days_left < 0:
+                    expired.append({
+                        'user_id': user_id,
+                        'proxy_name': proxy_name,
+                        'days_left': days_left
+                    })
+                elif days_left <= 3:
+                    expiring.append({
+                        'user_id': user_id,
+                        'proxy_name': proxy_name,
+                        'days_left': days_left
+                    })
+            except ValueError:
+                continue
     
     return expired, expiring
 

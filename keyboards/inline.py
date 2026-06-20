@@ -15,10 +15,11 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardBuilder:
     if is_admin:
         builder.button(text="⚙️ Админ-панель", callback_data="menu_admin_main")
     
+    # Все кнопки в 2 колонки
     if is_admin:
-        builder.adjust(2, 1, 1)
+        builder.adjust(2, 2, 1)  # 2+2+1
     else:
-        builder.adjust(2, 1)
+        builder.adjust(2, 2)      # 2+2
     
     return builder
 
@@ -183,8 +184,9 @@ def get_help_main_keyboard() -> InlineKeyboardBuilder:
 # ==========================================
 
 def get_admin_main_keyboard() -> InlineKeyboardBuilder:
+    """Клавиатура админ-панели"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="📊 Статистика", callback_data="menu_stats")
+    builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="🔍 Проверка сроков", callback_data="admin_check_expiry")
     builder.button(text="👥 Управление пользователями", callback_data="admin_users")
     builder.button(text="📦 Бэкапы", callback_data="menu_backup")
