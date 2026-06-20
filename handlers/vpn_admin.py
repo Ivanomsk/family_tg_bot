@@ -283,11 +283,11 @@ async def vpn_issue_start(callback: types.CallbackQuery, state: FSMContext):
     )
     
     # Устанавливаем состояние ожидания username
-    await state.set_state(VpnIssue.waiting_username)
+    await state.set_state(VpnIssue.waiting_for_username)
     await callback.answer()
 
 
-@router.message(VpnIssue.waiting_username)
+@router.message(VpnIssue.waiting_for_username)
 async def process_vpn_issue_username(message: types.Message, state: FSMContext):
     """Обработка введённого username"""
     audit_logger.info(f"🔐 VPN_ISSUE_START | USER:{message.from_user.id} | USERNAME:{message.from_user.username}")
@@ -343,7 +343,7 @@ async def process_vpn_issue_username(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-@router.callback_query(F.data == "vpn_admin_menu", VpnIssue.waiting_username)
+@router.callback_query(F.data == "vpn_admin_menu", VpnIssue.waiting_for_username)
 async def cancel_vpn_issue(callback: types.CallbackQuery, state: FSMContext):
     """Отмена выдачи VPN конфига"""
     await state.clear()

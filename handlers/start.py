@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import ADMIN_IDS, USER_PROXIES_FILE, VPN_DIR, BACKUP_DIR, ALLOWED_CHAT_ID
 from utils.auto_delete import delete_user, delete_admin, delete_temp
@@ -32,11 +32,12 @@ from keyboards.inline import (
     get_amnezia_announce_keyboard,
     get_problem_cancel_keyboard
 )
-from states.forms import ConfigRequest, ProxyRequest, NewsRequest, ProblemReport
+from states.forms import ConfigRequest, ProxyRequest, NewsRequest, ProblemReport, ProxyIssue
 import os
 import re
 import asyncio
-from datetime import datetime
+import urllib.parse
+from datetime import datetime, timedelta
 
 router = Router()
 logger = standard_logger
@@ -925,8 +926,6 @@ async def vpn_select(callback: types.CallbackQuery):
         if is_expired and not is_permanent:
             text += "\n\n🔴 <b>Конфиг просрочен!</b>\nСкачивание недоступно. Запросите продление."
         
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        
         buttons = []
         
         # Кнопка "Скачать" — только если активен и не истек или бессрочный
@@ -964,8 +963,6 @@ async def vpn_select(callback: types.CallbackQuery):
             f"📊 <b>Статус:</b> 🟢 Активен\n\n"
             f"💡 <i>Данные о конфиге отсутствуют в базе</i>"
         )
-        
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         
         buttons = [
             [InlineKeyboardButton(
@@ -1060,3 +1057,388 @@ async def download_config(callback: types.CallbackQuery):
         )
     else:
         await callback.answer("❌ Файл не найден", show_alert=True)
+
+
+# ==========================================
+# ПРОКСИ - ПОКАЗ СПИСКА
+# ==========================================
+
+@router.callback_query(F.data == "menu_proxy")
+async def menu_proxy(callback: types.CallbackQuery):
+    """Показать список прокси пользователя"""
+    if not await require_private_chat(callback, "просмотр прокси"):
+        return
+    
+    await callback.answer()
+    
+    user_id = callback.from_user.id
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+    
+    if not proxies:
+        text = "🛰 <b>Мои прокси</b>\n\n"
+        text += "У тебя пока нет прокси.\n\n"
+        text += "Нажми кнопку ниже, чтобы запросить прокси у админа."
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_proxy_empty_keyboard().as_markup(),
+            parse_mode="HTML"
+        )
+    else:
+        text = f"🛰 <b>Мои прокси</b>\n\n"
+        text += f"Найдено: <b>{len(proxies)}</b>\n"
+        text += "Выбери прокси:"
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_proxy_list_keyboard(proxies, user_id).as_markup(),
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("proxy_select_"))
+async def proxy_select(callback: types.CallbackQuery):
+    """Выбор конкретного прокси"""
+    if not await require_private_chat(callback, "просмотр прокси"):
+        return
+    
+    await callback.answer()
+    
+    user_id = callback.from_user.id
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+    
+    try:
+        index = int(callback.data.split("_")[-1])
+        proxy = proxies[index]
+    except (IndexError, ValueError):
+        await callback.answer("❌ Прокси не найден", show_alert=True)
+        return
+    
+    # Получаем username пользователя
+    username = callback.from_user.username or f"ID:{user_id}"
+    
+    # Формируем ссылку для подключения
+    tg_link = f"tg://proxy?server={proxy['server']}&port={proxy['port']}&secret={proxy['secret']}"
+    
+    # Форматируем дату выдачи
+    issued_at_raw = proxy.get('issued_at', 'не указана')
+    if issued_at_raw != 'не указана':
+        try:
+            issued_dt = datetime.fromisoformat(issued_at_raw)
+            issued_at = issued_dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            issued_at = issued_at_raw
+    else:
+        issued_at = 'не указана'
+    
+    # Проверяем бессрочный статус
+    is_permanent = proxy.get('permanent', False)
+    
+    # Проверяем срок действия
+    expires_at = None
+    days_left = None
+    is_expired = False
+    
+    if not is_permanent and issued_at_raw != 'не указана':
+        try:
+            issued_date = datetime.fromisoformat(issued_at_raw)
+            expires_date = issued_date + timedelta(days=30)
+            expires_at = expires_date.strftime('%d.%m.%Y')
+            days_left = (expires_date - datetime.now()).days
+            if days_left < 0:
+                is_expired = True
+        except:
+            pass
+    
+    # Определяем статус
+    if is_permanent:
+        status = "♾️ Бессрочный"
+    elif is_expired:
+        status = "🔴 Истек"
+    elif days_left is not None and days_left <= 3:
+        status = f"🟡 Истекает через {days_left} дн."
+    else:
+        status = "🟢 Активен"
+    
+    text = (
+        f"🔒 <b>Карточка прокси</b>\n\n"
+        f"👤 <b>Пользователь:</b> @{username}\n"
+        f"📁 <b>Имя:</b> {proxy['name']}\n"
+        f"🌐 <b>Сервер:</b> {proxy['server']}\n"
+        f"🔌 <b>Порт:</b> {proxy['port']}\n"
+        f"📅 <b>Выдан:</b> {issued_at}\n"
+        f"📅 <b>Истекает:</b> {expires_at if expires_at else ('♾️ Бессрочный' if is_permanent else 'не указана')}\n"
+        f"📊 <b>Статус:</b> {status}\n"
+    )
+    
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    buttons = []
+    
+    # Кнопка подключения только если не истек
+    if not is_expired and not is_permanent:
+        buttons.append([InlineKeyboardButton(
+            text="📱 Подключить в Telegram",
+            url=tg_link
+        )])
+    elif is_permanent:
+        buttons.append([InlineKeyboardButton(
+            text="📱 Подключить в Telegram",
+            url=tg_link
+        )])
+    
+    # Кнопка продления — если не бессрочный и (истек или осталось ≤ 5 дней)
+    if not is_permanent:
+        if is_expired or (days_left is not None and days_left <= 5):
+            buttons.append([InlineKeyboardButton(
+                text="🔄 Запросить продление",
+                callback_data=f"proxy_extend_{user_id}_{index}"
+            )])
+    
+    buttons.append([InlineKeyboardButton(
+        text="🔙 К списку",
+        callback_data="menu_proxy"
+    )])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data == "proxy_request")
+async def proxy_request(callback: types.CallbackQuery):
+    """Запрос нового прокси"""
+    if not await require_private_chat(callback, "запрос прокси"):
+        return
+    
+    await callback.answer()
+    
+    user = callback.from_user
+    username = user.username or f"ID:{user.id}"
+    
+    # Отправляем запрос админу
+    request_msg = (
+        f"🛰 <b>НОВЫЙ ЗАПРОС ПРОКСИ</b>\n\n"
+        f"👤 @{username}\n"
+        f"📱 ID: {user.id}\n\n"
+        f"Ждёт персональный прокси-ключ!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📝 Выписать ключ",
+                callback_data=f"proxy_issue_{user.id}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"proxy_reject_{user.id}"
+            )
+        ]
+    ])
+    
+    sent_count = 0
+    for admin_id in ADMIN_IDS:
+        try:
+            await callback.bot.send_message(
+                admin_id,
+                request_msg,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            sent_count += 1
+        except Exception as e:
+            logger.error(f"Ошибка отправки админу {admin_id}: {e}")
+    
+    text = (
+        "✅ <b>Запрос отправлен!</b>\n\n"
+        f"Админ получил твою заявку.\n"
+        f"Ожидай ответа...\n\n"
+        f"💡 <i>Отправлено {sent_count} админу(ам)</i>"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_proxy_request_keyboard().as_markup(),
+        parse_mode="HTML"
+    )
+
+
+# ==========================================
+# ПРОКСИ - АДМИН (ВЫДАЧА/ОТКЛОНЕНИЕ)
+# ==========================================
+
+@router.callback_query(F.data.startswith("proxy_issue_"))
+async def proxy_issue(callback: types.CallbackQuery, state: FSMContext):
+    """Админ начинает выдачу прокси — запрашиваем имя"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[-1])
+    
+    # Сохраняем user_id в состоянии
+    await state.update_data(target_user_id=user_id)
+    await state.set_state(ProxyIssue.waiting_for_name)
+    
+    await callback.message.edit_text(
+        "📝 <b>Введите название прокси</b>\n\n"
+        "Например: Основной, Резерв, Для работы и т.д.\n\n"
+        "Или нажмите /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(ProxyIssue.waiting_for_name, F.text)
+async def proxy_issue_get_name(message: types.Message, state: FSMContext):
+    """Получаем имя прокси, запрашиваем ключ"""
+    if message.text.startswith('/'):
+        await state.clear()
+        await message.answer("❌ Отменено.", reply_markup=get_back_to_main_menu().as_markup())
+        return
+    
+    name = message.text.strip()
+    await state.update_data(proxy_name=name)
+    await state.set_state(ProxyIssue.waiting_for_key)
+    
+    await message.answer(
+        "🔑 <b>Введите ключ прокси</b>\n\n"
+        "Вставьте ссылку в формате:\n"
+        "<code>tg://proxy?server=nas-msk.online&port=443&secret=eec03592318ff9f161f29538302627ebfd6e61732d6d736b2e6f6e6c696e65</code>\n\n"
+        "Или нажмите /cancel для отмены.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(ProxyIssue.waiting_for_key, F.text)
+async def proxy_issue_get_key(message: types.Message, state: FSMContext):
+    """Получаем ключ и сохраняем прокси"""
+    if message.text.startswith('/'):
+        await state.clear()
+        await message.answer("❌ Отменено.", reply_markup=get_back_to_main_menu().as_markup())
+        return
+    
+    key_text = message.text.strip()
+    
+    # Проверяем формат tg://proxy
+    if not key_text.startswith('tg://proxy'):
+        await message.answer(
+            "❌ <b>Неверный формат!</b>\n\n"
+            "Ссылка должна начинаться с <code>tg://proxy</code>\n\n"
+            "Пример:\n"
+            "<code>tg://proxy?server=nas-msk.online&port=443&secret=eec03592318ff9f161f29538302627ebfd6e61732d6d736b2e6f6e6c696e65</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Парсим параметры
+    parsed = urllib.parse.urlparse(key_text)
+    params = urllib.parse.parse_qs(parsed.query)
+    
+    server = params.get('server', [None])[0]
+    port = params.get('port', [None])[0]
+    secret = params.get('secret', [None])[0]
+    
+    if not server or not port or not secret:
+        await message.answer(
+            "❌ <b>Не хватает параметров!</b>\n\n"
+            "Должны быть: <code>server</code>, <code>port</code>, <code>secret</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    try:
+        port = int(port)
+    except ValueError:
+        await message.answer("❌ Порт должен быть числом.")
+        return
+    
+    # Получаем данные из состояния
+    data = await state.get_data()
+    target_user_id = data.get('target_user_id')
+    proxy_name = data.get('proxy_name', 'Прокси')
+    
+    # Сохраняем прокси
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    user_id_str = str(target_user_id)
+    
+    if user_id_str not in user_proxies:
+        user_proxies[user_id_str] = {"proxies": []}
+    
+    proxy_data = {
+        "name": proxy_name,
+        "server": server,
+        "port": port,
+        "secret": secret,
+        "issued_at": datetime.now().isoformat(),
+        "issued_by": message.from_user.id
+    }
+    
+    user_proxies[user_id_str]["proxies"].append(proxy_data)
+    save_json(USER_PROXIES_FILE, user_proxies)
+    
+    # Отправляем пользователю
+    tg_link = f"tg://proxy?server={server}&port={port}&secret={secret}"
+    
+    try:
+        await message.bot.send_message(
+            target_user_id,
+            f"✅ <b>Ваш персональный прокси готов!</b>\n\n"
+            f"📁 <b>Имя:</b> {proxy_name}\n"
+            f"🌐 <b>Сервер:</b> {server}\n"
+            f"🔌 <b>Порт:</b> {port}\n"
+            f"📅 <b>Выдан:</b> {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"💡 Нажмите кнопку для подключения:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📱 Подключить в Telegram", url=tg_link)]
+            ]),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки прокси пользователю {target_user_id}: {e}")
+        await message.answer(f"❌ Ошибка отправки пользователю: {e}")
+        await state.clear()
+        return
+    
+    await message.answer(
+        f"✅ <b>Прокси выдан!</b>\n\n"
+        f"👤 Пользователь: ID {target_user_id}\n"
+        f"📁 Имя: {proxy_name}\n"
+        f"🌐 Сервер: {server}\n"
+        f"🔌 Порт: {port}\n\n"
+        f"💡 Пользователь получил уведомление.",
+        reply_markup=get_back_to_main_menu().as_markup(),
+        parse_mode="HTML"
+    )
+    
+    audit_logger.info(f"ACTION:PROXY_ISSUED | ADMIN:{message.from_user.id} | USER:{target_user_id} | NAME:{proxy_name}")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("proxy_reject_"))
+async def proxy_reject(callback: types.CallbackQuery):
+    """Админ отклоняет запрос прокси"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[-1])
+    
+    try:
+        await callback.bot.send_message(
+            user_id,
+            "❌ <b>Запрос прокси отклонён</b>\n\nОбратитесь к администратору.",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+    
+    await callback.message.edit_text("❌ Запрос отклонён")
+    await callback.answer()

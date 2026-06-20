@@ -23,7 +23,6 @@ logger = standard_logger
 
 @router.message(Command("configs"))
 async def cmd_configs(message: types.Message):
-    """Список всех конфигов (только админ)"""
     if message.from_user.id not in ADMIN_IDS:
         msg = await message.answer("❌ Только для администратора.")
         delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
@@ -55,7 +54,6 @@ async def cmd_configs(message: types.Message):
 
 @router.message(Command("delconfig"))
 async def cmd_delconfig(message: types.Message):
-    """Удалить конкретный конфиг пользователя"""
     if message.from_user.id not in ADMIN_IDS:
         msg = await message.answer("❌ Только для администратора.")
         delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
@@ -87,7 +85,6 @@ async def cmd_delconfig(message: types.Message):
 
 @router.message(Command("clearuser"))
 async def cmd_clearuser(message: types.Message):
-    """Удалить все конфиги пользователя"""
     if message.from_user.id not in ADMIN_IDS:
         msg = await message.answer("❌ Только для администратора.")
         delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
@@ -117,7 +114,6 @@ async def cmd_clearuser(message: types.Message):
 
 @router.message(Command("clearproxy"))
 async def cmd_clearproxy(message: types.Message):
-    """Удалить все прокси пользователя"""
     if message.from_user.id not in ADMIN_IDS:
         msg = await message.answer("❌ Только для администратора.")
         delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
@@ -151,12 +147,11 @@ async def cmd_clearproxy(message: types.Message):
 
 
 # ==========================================
-# БЕССРОЧНЫЙ СТАТУС (АДМИН)
+# БЕССРОЧНЫЙ СТАТУС VPN
 # ==========================================
 
 @router.callback_query(F.data == "admin_permanent_menu")
 async def admin_permanent_menu(callback: types.CallbackQuery):
-    """Меню управления бессрочным статусом"""
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
@@ -172,25 +167,21 @@ async def admin_permanent_menu(callback: types.CallbackQuery):
         )
         return
     
-    # Группируем по пользователям
+    stats = load_json("bot_data/stats.json", {})
+    
     users = {}
     for ch, cd in vpn_users.items():
         username = cd.get('username', 'unknown')
         if username not in users:
             users[username] = []
-        # Получаем список файлов пользователя
-        user_dir = get_user_dir(username)
-        configs = get_user_configs(username)
-        filename = configs[0] if configs else f"{username}.vpn"
         users[username].append({
             'hash': ch,
-            'filename': filename,
             'permanent': cd.get('permanent', False),
             'active': cd.get('active', True)
         })
     
     text = (
-        "♾️ <b>Управление бессрочным статусом</b>\n\n"
+        "♾️ <b>Управление бессрочным статусом VPN</b>\n\n"
         "💡 <b>Используйте команду:</b>\n"
         "<code>/permanent username filename on/off</code>\n\n"
         "📝 <b>Примеры:</b>\n"
@@ -201,11 +192,12 @@ async def admin_permanent_menu(callback: types.CallbackQuery):
     
     for username, configs in users.items():
         active_count = sum(1 for c in configs if c['active'])
-        text += f"\n👤 @{username} ({active_count} конфигов)"
+        username_display = f"@{username}" if username else "unknown"
+        text += f"\n👤 {username_display} ({active_count} конфигов)"
         for c in configs:
             status = "♾️" if c['permanent'] else "📅"
             active = "✅" if c['active'] else "❌"
-            text += f"\n  {status} {active} {c['filename']}"
+            text += f"\n  {status} {active} {c['hash'][:20]}..."
     
     await callback.message.edit_text(
         text,
@@ -216,7 +208,6 @@ async def admin_permanent_menu(callback: types.CallbackQuery):
 
 @router.message(Command("permanent"))
 async def cmd_permanent(message: types.Message):
-    """Команда для установки бессрочного статуса на КОНКРЕТНЫЙ КОНФИГ"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Только для администратора.")
         return
@@ -248,7 +239,6 @@ async def cmd_permanent(message: types.Message):
     
     for ch, cd in vpn_users.items():
         if cd.get('username') == username and cd.get('active', True):
-            # Проверяем, есть ли файл с таким именем
             user_dir = get_user_dir(username)
             if os.path.exists(os.path.join(user_dir, filename)):
                 found = True
@@ -257,7 +247,6 @@ async def cmd_permanent(message: types.Message):
                     status_text = f"♾️ Бессрочный (конфиг: {filename})"
                 else:
                     cd.pop('permanent', None)
-                    # Восстанавливаем дату истечения, если её нет
                     if 'expires_at' not in cd or cd.get('expires_at') == "бессрочно":
                         new_expires = datetime.now() + timedelta(days=30)
                         cd['expires_at'] = new_expires.isoformat()
@@ -273,15 +262,198 @@ async def cmd_permanent(message: types.Message):
                     f"📊 Новый статус: {status_text}",
                     parse_mode="HTML"
                 )
-                audit_logger.info(
-                    f"ACTION:PERMANENT | ADMIN:{message.from_user.id} | "
-                    f"USER:{username} | FILE:{filename} | {action}"
-                )
+                audit_logger.info(f"ACTION:PERMANENT | ADMIN:{message.from_user.id} | USER:{username} | FILE:{filename} | {action}")
                 return
     
     if not found:
         await message.answer(
             f"❌ Конфиг <b>{filename}</b> для пользователя @{username} не найден.\n\n"
             f"Проверьте имя файла (с расширением .vpn).",
+            parse_mode="HTML"
+        )
+
+
+# ==========================================
+# СПИСОК ПРОКСИ (АДМИН)
+# ==========================================
+
+@router.callback_query(F.data == "admin_proxy_list")
+async def admin_proxy_list(callback: types.CallbackQuery):
+    """Список всех прокси (админ)"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    user_proxies = load_json("bot_data/user_proxies.json", {})
+    if not user_proxies:
+        await callback.message.edit_text(
+            "📭 Нет пользователей с прокси.",
+            reply_markup=get_back_keyboard("menu_admin_main").as_markup(),
+            parse_mode="HTML"
+        )
+        return
+    
+    stats = load_json("bot_data/stats.json", {})
+    
+    text = "🛰 <b>Список прокси пользователей</b>\n\n"
+    
+    for user_id_str, data in user_proxies.items():
+        user_id = int(user_id_str)
+        proxies = data.get("proxies", [])
+        
+        if proxies:
+            username = stats.get(user_id_str, {}).get('username')
+            if username:
+                display_name = f"@{username} (ID: {user_id_str})"
+            else:
+                display_name = f"ID: {user_id_str}"
+            
+            text += f"👤 {display_name} ({len(proxies)}):\n"
+            for p in proxies:
+                is_permanent = p.get('permanent', False)
+                status = "♾️" if is_permanent else "📅"
+                text += f"  {status} {p.get('name')} | {p.get('server')}:{p.get('port')}\n"
+            text += "\n"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("menu_admin_main").as_markup()
+    )
+
+
+# ==========================================
+# БЕССРОЧНЫЙ СТАТУС ДЛЯ ПРОКСИ
+# ==========================================
+
+@router.callback_query(F.data == "admin_permanent_proxy_menu")
+async def admin_permanent_proxy_menu(callback: types.CallbackQuery):
+    """Меню управления бессрочным статусом прокси"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    user_proxies = load_json("bot_data/user_proxies.json", {})
+    if not user_proxies:
+        await callback.message.edit_text(
+            "📭 Нет пользователей с прокси.",
+            reply_markup=get_back_keyboard("menu_admin_main").as_markup(),
+            parse_mode="HTML"
+        )
+        return
+    
+    stats = load_json("bot_data/stats.json", {})
+    
+    text = (
+        "♾️ <b>Управление бессрочным статусом прокси</b>\n\n"
+        "💡 <b>Используйте команду:</b>\n"
+        "<code>/permanent_proxy user_id имя_прокси on/off</code>\n\n"
+        "📝 <b>Примеры:</b>\n"
+        "<code>/permanent_proxy 764438696 Основной on</code>\n"
+        "<code>/permanent_proxy 764438696 Основной off</code>\n\n"
+        "📋 <b>Список пользователей с прокси:</b>\n"
+    )
+    
+    from utils.expiry import is_proxy_expired
+    
+    for user_id_str, data in user_proxies.items():
+        user_id = int(user_id_str)
+        proxies = data.get("proxies", [])
+        active_proxies = [p for p in proxies if not is_proxy_expired(user_id, p.get('name'))]
+        
+        if active_proxies:
+            username = stats.get(user_id_str, {}).get('username')
+            if username:
+                display_name = f"@{username} (ID: {user_id_str})"
+            else:
+                display_name = f"ID: {user_id_str}"
+            
+            text += f"\n👤 {display_name} ({len(active_proxies)} прокси)"
+            for p in active_proxies:
+                status = "♾️" if p.get('permanent', False) else "📅"
+                text += f"\n  {status} {p.get('name')}"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("menu_admin_main").as_markup()
+    )
+
+
+@router.message(Command("permanent_proxy"))
+async def cmd_permanent_proxy(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Только для администратора.")
+        return
+    
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
+        await message.answer(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Используйте:\n"
+            "<code>/permanent_proxy user_id proxy_name on</code> — бессрочный\n"
+            "<code>/permanent_proxy user_id proxy_name off</code> — убрать бессрочный\n\n"
+            "📝 <b>Примеры:</b>\n"
+            "<code>/permanent_proxy 764438696 Основной on</code>\n"
+            "<code>/permanent_proxy 764438696 Основной off</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    try:
+        target_user_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID пользователя должен быть числом.")
+        return
+    
+    proxy_name = parts[2]
+    action = parts[3].lower()
+    
+    if action not in ["on", "off"]:
+        await message.answer("❌ Действие должно быть <code>on</code> или <code>off</code>", parse_mode="HTML")
+        return
+    
+    user_proxies = load_json("bot_data/user_proxies.json", {})
+    user_id_str = str(target_user_id)
+    
+    if user_id_str not in user_proxies:
+        await message.answer(f"❌ Пользователь ID {target_user_id} не найден.")
+        return
+    
+    proxies = user_proxies[user_id_str].get("proxies", [])
+    found = False
+    
+    for proxy in proxies:
+        if proxy.get('name') == proxy_name:
+            found = True
+            if action == "on":
+                proxy['permanent'] = True
+                status_text = f"♾️ Бессрочный (прокси: {proxy_name})"
+            else:
+                proxy.pop('permanent', None)
+                if 'issued_at' not in proxy:
+                    proxy['issued_at'] = datetime.now().isoformat()
+                status_text = f"🔄 Обычный (30 дней) (прокси: {proxy_name})"
+            
+            user_proxies[user_id_str]["proxies"] = proxies
+            save_json("bot_data/user_proxies.json", user_proxies)
+            
+            await message.answer(
+                f"✅ <b>Статус обновлён!</b>\n\n"
+                f"👤 Пользователь ID: {target_user_id}\n"
+                f"📁 Прокси: {proxy_name}\n"
+                f"📊 Новый статус: {status_text}",
+                parse_mode="HTML"
+            )
+            audit_logger.info(f"ACTION:PERMANENT_PROXY | ADMIN:{message.from_user.id} | USER:{target_user_id} | PROXY:{proxy_name} | {action}")
+            return
+    
+    if not found:
+        await message.answer(
+            f"❌ Прокси <b>{proxy_name}</b> у пользователя ID {target_user_id} не найден.",
             parse_mode="HTML"
         )

@@ -6,20 +6,17 @@ from handlers import start, vpn, proxy, admin, backup, errors, vpn_admin
 from handlers import extend
 from utils.expiry import check_all_vpn_expiry, check_all_proxy_expiry
 from utils.logger import standard_logger, audit_logger
-from utils.notifications import check_and_send_personal_notifications
+from utils.notifications import (
+    check_and_send_personal_notifications,
+    check_proxy_notifications
+)
 from utils.vpn_manager import delete_expired_vpn
 
 logger = standard_logger
 
 
-# ============================================
-# АВТОПРОВЕРКА ИСТЁКШИХ VPN И ПРОКСИ
-# ============================================
-
 async def check_all_expiry_on_startup(bot):
-    """Проверяет истёкшие VPN и прокси при запуске и уведомляет админа"""
     await asyncio.sleep(5)
-    
     try:
         vpn_expired, vpn_expiring = check_all_vpn_expiry()
         proxy_expired, proxy_expiring = check_all_proxy_expiry()
@@ -29,7 +26,6 @@ async def check_all_expiry_on_startup(bot):
 
     if vpn_expired or vpn_expiring or proxy_expired or proxy_expiring:
         text = "🔔 <b>Автоматическая проверка срока</b>\n\n"
-        
         if vpn_expired:
             text += f"❌ <b>VPN ИСТЕКЛИ ({len(vpn_expired)}):</b>\n"
             for item in vpn_expired[:5]:
@@ -37,13 +33,11 @@ async def check_all_expiry_on_startup(bot):
             if len(vpn_expired) > 5:
                 text += f"  • ... и ещё {len(vpn_expired) - 5}\n"
             text += "\n"
-        
         if vpn_expiring:
             text += f"⚠️ <b>VPN ИСТЕКАЮТ ({len(vpn_expiring)}):</b>\n"
             for item in vpn_expiring[:5]:
                 text += f"  • @{item['username']} — {item['filename']} ({item['days_left']} дн.)\n"
             text += "\n"
-        
         if proxy_expired:
             text += f"❌ <b>ПРОКСИ ИСТЕКЛИ ({len(proxy_expired)}):</b>\n"
             for item in proxy_expired[:5]:
@@ -51,56 +45,47 @@ async def check_all_expiry_on_startup(bot):
             if len(proxy_expired) > 5:
                 text += f"  • ... и ещё {len(proxy_expired) - 5}\n"
             text += "\n"
-        
         if proxy_expiring:
             text += f"⚠️ <b>ПРОКСИ ИСТЕКАЮТ ({len(proxy_expiring)}):</b>\n"
             for item in proxy_expiring[:5]:
                 text += f"  • ID {item['user_id']} — {item['proxy_name']} ({item['days_left']} дн.)\n"
-        
         for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(admin_id, text, parse_mode="HTML")
             except Exception as e:
                 logger.error(f"Не удалось отправить отчёт админу {admin_id}: {e}")
-        
-        logger.info(
-            f"🔔 Отправлен отчёт: VPN {len(vpn_expired)} истекли/{len(vpn_expiring)} истекают, "
-            f"Прокси {len(proxy_expired)} истекли/{len(proxy_expiring)} истекают"
-        )
-        
-        audit_logger.info(
-            f"ACTION:STARTUP_EXPIRY_CHECK | "
-            f"VPN_EXPIRED:{len(vpn_expired)} | "
-            f"VPN_EXPIRING:{len(vpn_expiring)} | "
-            f"PROXY_EXPIRED:{len(proxy_expired)} | "
-            f"PROXY_EXPIRING:{len(proxy_expiring)}"
-        )
+        logger.info(f"🔔 Отправлен отчёт: VPN {len(vpn_expired)} истекли/{len(vpn_expiring)} истекают, Прокси {len(proxy_expired)} истекли/{len(proxy_expiring)} истекают")
+        audit_logger.info(f"ACTION:STARTUP_EXPIRY_CHECK | VPN_EXPIRED:{len(vpn_expired)} | VPN_EXPIRING:{len(vpn_expiring)} | PROXY_EXPIRED:{len(proxy_expired)} | PROXY_EXPIRING:{len(proxy_expiring)}")
     else:
         logger.info("✅ Все VPN и прокси активны")
 
 
-# ============================================
-# ФОНОВЫЕ ЗАДАЧИ
-# ============================================
-
 async def scheduled_tasks(bot):
-    """Фоновые задачи: удаление истекших VPN и отправка уведомлений"""
     await asyncio.sleep(10)
     logger.info("🔄 Фоновая задача scheduled_tasks запущена!")
-    
     while True:
         try:
-            logger.info("🔍 Начинаем проверку истекших VPN...")
+            # VPN
+            logger.info("🔍 Проверка VPN...")
             deleted = delete_expired_vpn()
             if deleted > 0:
                 logger.info(f"🗑️ Удалено {deleted} истекших VPN")
+            sent_vpn = await check_and_send_personal_notifications(bot)
+            if sent_vpn > 0:
+                logger.info(f"🔔 Отправлено {sent_vpn} личных уведомлений VPN")
             
-            logger.info("🔍 Начинаем проверку уведомлений...")
-            sent = await check_and_send_personal_notifications(bot)
-            if sent > 0:
-                logger.info(f"🔔 Отправлено {sent} личных уведомлений")
-            else:
-                logger.info("📭 Нет конфигов для уведомлений")
+            # Прокси
+            logger.info("🔍 Проверка прокси...")
+            sent_proxy = await check_proxy_notifications(bot)
+            if sent_proxy > 0:
+                logger.info(f"🔔 Отправлено {sent_proxy} уведомлений о прокси")
+            
+            # Общая проверка сроков
+            vpn_expired, vpn_expiring = check_all_vpn_expiry()
+            proxy_expired, proxy_expiring = check_all_proxy_expiry()
+            
+            if vpn_expired or vpn_expiring or proxy_expired or proxy_expiring:
+                logger.info(f"📊 Статус: VPN истекло {len(vpn_expired)}, истекает {len(vpn_expiring)} | Прокси истекло {len(proxy_expired)}, истекает {len(proxy_expiring)}")
             
             await asyncio.sleep(21600)
         except Exception as e:
@@ -108,15 +93,10 @@ async def scheduled_tasks(bot):
             await asyncio.sleep(3600)
 
 
-# ============================================
-# ГЛАВНАЯ ФУНКЦИЯ
-# ============================================
-
 async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     
-    # Регистрация роутеров
     dp.include_router(start.router)
     dp.include_router(vpn_admin.router)
     dp.include_router(vpn.router)
@@ -129,10 +109,7 @@ async def main():
     logger.info("🧠 Санитар Дурдома запущен!")
     audit_logger.info("=== БОТ ЗАПУЩЕН ===")
     
-    # Запускаем проверку истёкших VPN и прокси при старте
     asyncio.create_task(check_all_expiry_on_startup(bot))
-    
-    # Запускаем фоновые задачи
     asyncio.create_task(scheduled_tasks(bot))
     
     await dp.start_polling(bot)

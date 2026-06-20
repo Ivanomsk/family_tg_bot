@@ -1,134 +1,197 @@
 import os
-from datetime import datetime
-from config import VPN_DIR, VPN_EXPIRY_DAYS, USER_PROXIES_FILE, PROXY_EXPIRY_DAYS
+import json
+from datetime import datetime, timedelta
+from config import VPN_DIR, USER_PROXIES_FILE, VPN_EXPIRY_DAYS, PROXY_EXPIRY_DAYS
 from database.storage import load_json
+from utils.logger import standard_logger
+
+logger = standard_logger
+
+
+# ==========================================
+# VPN
+# ==========================================
 
 def get_vpn_config_age(username: str, filename: str) -> dict:
-    """Получить возраст VPN конфига"""
-    user_dir = os.path.join(VPN_DIR, username)
-    file_path = os.path.join(user_dir, filename)
-    
-    if not os.path.exists(file_path):
-        return {"days": 0, "status": "not_found"}
-    
-    # Используем дату создания файла
-    created = datetime.fromtimestamp(os.path.getctime(file_path))
-    days_since = (datetime.now() - created).days
-    days_left = VPN_EXPIRY_DAYS - days_since
-    
-    if days_left < 0:
-        status = "expired"
-    elif days_left <= 7:
-        status = "expiring_soon"
-    else:
-        status = "active"
-    
-    return {
-        "days": days_since,
-        "days_left": days_left,
-        "created": created,
-        "status": status
-    }
-
-def get_proxy_age(user_id: int, proxy_name: str) -> dict:
-    """Получить возраст прокси"""
-    user_proxies = load_json(USER_PROXIES_FILE, {})
-    user_id_str = str(user_id)
-    
-    if user_id_str not in user_proxies or "proxies" not in user_proxies[user_id_str]:
-        return {"days": 0, "status": "not_found"}
-    
-    for proxy in user_proxies[user_id_str]["proxies"]:
-        if proxy.get("name") == proxy_name and "issued_at" in proxy:
-            issued_at = datetime.fromisoformat(proxy["issued_at"])
-            days_since = (datetime.now() - issued_at).days
-            days_left = PROXY_EXPIRY_DAYS - days_since
+    try:
+        user_dir = os.path.join(VPN_DIR, username)
+        file_path = os.path.join(user_dir, filename)
+        if not os.path.exists(file_path):
+            return {"status": "not_found", "days_left": None}
+        
+        import re
+        match = re.search(r'(\d{2})\.(\d{2})\.vpn', filename)
+        if match:
+            day, month = int(match.group(1)), int(match.group(2))
+            year = datetime.now().year
+            expires = datetime(year, month, day)
+            if expires < datetime.now():
+                expires = expires.replace(year=year + 1)
+            days_left = (expires - datetime.now()).days
+        else:
+            days_left = 30
+        
+        if days_left < 0:
+            return {"status": "expired", "days_left": days_left}
+        elif days_left <= 3:
+            return {"status": "expiring_soon", "days_left": days_left}
+        else:
+            return {"status": "active", "days_left": days_left}
             
-            if days_left < 0:
-                status = "expired"
-            elif days_left <= 7:
-                status = "expiring_soon"
-            else:
-                status = "active"
-            
-            return {
-                "days": days_since,
-                "days_left": days_left,
-                "issued_at": issued_at,
-                "status": status
-            }
-    
-    return {"days": 0, "status": "not_found"}
+    except Exception as e:
+        logger.error(f"Ошибка получения возраста конфига {filename}: {e}")
+        return {"status": "unknown", "days_left": None}
 
-def format_expiry_indicator(days_left: int, status: str) -> str:
-    """Форматировать индикатор срока"""
-    if status == "expired":
-        return f"❌ <b>ИСТЁК {abs(days_left)} дн. назад</b>"
-    elif status == "expiring_soon":
-        return f"⚠️ <b>Истекает через {days_left} дн.</b>"
-    else:
-        return f"✅ Активен (осталось {days_left} дн.)"
 
-def check_all_vpn_expiry() -> list:
-    """Проверить все VPN конфиги на истечение"""
+def check_all_vpn_expiry():
     expired = []
-    expiring_soon = []
+    expiring = []
     
     if not os.path.exists(VPN_DIR):
-        return expired, expiring_soon
+        return expired, expiring
     
-    for username in os.listdir(VPN_DIR):
-        user_dir = os.path.join(VPN_DIR, username)
-        if not os.path.isdir(user_dir):
+    for user_dir in os.listdir(VPN_DIR):
+        user_path = os.path.join(VPN_DIR, user_dir)
+        if not os.path.isdir(user_path):
             continue
         
-        for filename in os.listdir(user_dir):
-            if filename.endswith('.vpn'):
-                age = get_vpn_config_age(username, filename)
-                if age["status"] == "expired":
-                    expired.append({
-                        "username": username,
-                        "filename": filename,
-                        "days_expired": abs(age["days_left"])
-                    })
-                elif age["status"] == "expiring_soon":
-                    expiring_soon.append({
-                        "username": username,
-                        "filename": filename,
-                        "days_left": age["days_left"]
-                    })
-    
-    return expired, expiring_soon
-
-def check_all_proxy_expiry() -> list:
-    """Проверить все прокси на истечение"""
-    user_proxies = load_json(USER_PROXIES_FILE, {})
-    expired = []
-    expiring_soon = []
-    
-    for user_id_str, data in user_proxies.items():
-        if "proxies" not in data:
-            continue
-        
-        for proxy in data["proxies"]:
-            if "issued_at" not in proxy:
+        for filename in os.listdir(user_path):
+            if not filename.endswith('.vpn'):
                 continue
             
-            issued_at = datetime.fromisoformat(proxy["issued_at"])
-            days_since = (datetime.now() - issued_at).days
-            days_left = PROXY_EXPIRY_DAYS - days_since
-            
-            if days_left < 0:
+            age = get_vpn_config_age(user_dir, filename)
+            if age["status"] == "expired":
                 expired.append({
-                    "user_id": user_id_str,
-                    "proxy_name": proxy.get("name", "Без названия"),
-                    "days_expired": abs(days_left)
+                    "username": user_dir,
+                    "filename": filename,
+                    "days_left": age["days_left"]
                 })
-            elif days_left <= 7:
-                expiring_soon.append({
-                    "user_id": user_id_str,
-                    "proxy_name": proxy.get("name", "Без названия"),
-                    "days_left": days_left
+            elif age["status"] == "expiring_soon":
+                expiring.append({
+                    "username": user_dir,
+                    "filename": filename,
+                    "days_left": age["days_left"]
                 })
     
-    return expired, expiring_soon
+    return expired, expiring
+
+
+# ==========================================
+# ПРОКСИ
+# ==========================================
+
+def get_proxy_age(user_id: int, proxy_name: str) -> dict:
+    try:
+        user_proxies = load_json(USER_PROXIES_FILE, {})
+        proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+        
+        for proxy in proxies:
+            if proxy.get("name") == proxy_name:
+                if proxy.get('permanent', False):
+                    return {"status": "permanent", "days_left": None}
+                
+                issued_at = proxy.get("issued_at")
+                if not issued_at:
+                    return {"status": "unknown", "days_left": None}
+                
+                issued_date = datetime.fromisoformat(issued_at)
+                expires_date = issued_date + timedelta(days=PROXY_EXPIRY_DAYS)
+                days_left = (expires_date - datetime.now()).days
+                
+                if days_left < 0:
+                    return {"status": "expired", "days_left": days_left}
+                elif days_left <= 3:
+                    return {"status": "expiring_soon", "days_left": days_left}
+                else:
+                    return {"status": "active", "days_left": days_left}
+        
+        return {"status": "not_found", "days_left": None}
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения возраста прокси {proxy_name}: {e}")
+        return {"status": "unknown", "days_left": None}
+
+
+def check_all_proxy_expiry():
+    expired = []
+    expiring = []
+    
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    
+    for user_id_str, data in user_proxies.items():
+        user_id = int(user_id_str)
+        proxies = data.get("proxies", [])
+        
+        for proxy in proxies:
+            if proxy.get('permanent', False):
+                continue
+            
+            proxy_name = proxy.get("name")
+            if not proxy_name:
+                continue
+            
+            age = get_proxy_age(user_id, proxy_name)
+            if age["status"] == "expired":
+                expired.append({
+                    "user_id": user_id,
+                    "proxy_name": proxy_name,
+                    "days_left": age["days_left"]
+                })
+            elif age["status"] == "expiring_soon":
+                expiring.append({
+                    "user_id": user_id,
+                    "proxy_name": proxy_name,
+                    "days_left": age["days_left"]
+                })
+    
+    return expired, expiring
+
+
+def get_proxy_expiry_date(user_id: int, proxy_name: str) -> str:
+    try:
+        user_proxies = load_json(USER_PROXIES_FILE, {})
+        proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+        
+        for proxy in proxies:
+            if proxy.get("name") == proxy_name:
+                if proxy.get('permanent', False):
+                    return "♾️ Бессрочный"
+                
+                issued_at = proxy.get("issued_at")
+                if not issued_at:
+                    return "не указана"
+                
+                issued_date = datetime.fromisoformat(issued_at)
+                expires_date = issued_date + timedelta(days=PROXY_EXPIRY_DAYS)
+                return expires_date.strftime('%d.%m.%Y')
+        
+        return "не указана"
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения даты истечения прокси {proxy_name}: {e}")
+        return "не указана"
+
+
+def is_proxy_expired(user_id: int, proxy_name: str) -> bool:
+    try:
+        user_proxies = load_json(USER_PROXIES_FILE, {})
+        proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+        
+        for proxy in proxies:
+            if proxy.get("name") == proxy_name:
+                if proxy.get('permanent', False):
+                    return False
+                
+                issued_at = proxy.get("issued_at")
+                if not issued_at:
+                    return False
+                
+                issued_date = datetime.fromisoformat(issued_at)
+                expires_date = issued_date + timedelta(days=PROXY_EXPIRY_DAYS)
+                return expires_date < datetime.now()
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Ошибка проверки истечения прокси {proxy_name}: {e}")
+        return False
