@@ -197,10 +197,12 @@ def get_admin_main_keyboard() -> InlineKeyboardBuilder:
 
 
 def get_admin_users_keyboard() -> InlineKeyboardBuilder:
+    """Клавиатура управления пользователями"""
     builder = InlineKeyboardBuilder()
     builder.button(text="📋 Список VPN", callback_data="admin_vpn_list")
     builder.button(text="🗑️ Отозвать VPN", callback_data="admin_vpn_revoke")
     builder.button(text="📋 Список прокси", callback_data="admin_proxy_list")
+    builder.button(text="👤 Управление пользователем", callback_data="admin_user_manage")
     builder.button(text="♾️ Бессрочный VPN", callback_data="admin_permanent_menu")
     builder.button(text="♾️ Бессрочный прокси", callback_data="admin_permanent_proxy_menu")
     builder.button(text="🔙 Назад", callback_data="menu_admin_main")
