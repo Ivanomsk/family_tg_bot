@@ -186,7 +186,7 @@ def get_help_main_keyboard() -> InlineKeyboardBuilder:
 def get_admin_main_keyboard() -> InlineKeyboardBuilder:
     """Клавиатура админ-панели"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="📊 Статистика", callback_data="admin_stats")
+    builder.button(text="📊 Статистика", callback_data="menu_stats")
     builder.button(text="🔍 Проверка сроков", callback_data="admin_check_expiry")
     builder.button(text="👥 Управление пользователями", callback_data="admin_users")
     builder.button(text="📦 Бэкапы", callback_data="menu_backup")

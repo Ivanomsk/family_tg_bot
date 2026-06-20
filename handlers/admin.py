@@ -8,7 +8,15 @@ from utils.logger import standard_logger, audit_logger
 from database.storage import load_json, save_json
 from utils.vpn_manager import load_vpn_db, save_vpn_db, revoke_vpn_config
 from handlers.start import get_user_dir, get_user_configs
-from keyboards.inline import get_back_keyboard
+from keyboards.inline import (
+    get_back_keyboard,
+    get_admin_main_keyboard,
+    get_admin_users_keyboard,
+    get_news_keyboard,
+    get_amnezia_announce_keyboard,
+    get_problem_cancel_keyboard
+)
+from handlers.main_menu import admin_private_only
 import os
 import re
 import shutil
@@ -20,143 +28,366 @@ logger = standard_logger
 
 
 # ==========================================
-# АДМИН-ПАНЕЛЬ - КОМАНДЫ
+# АДМИН-ПАНЕЛЬ - КНОПКИ
 # ==========================================
 
-@router.message(Command("configs"))
-async def cmd_configs(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        msg = await message.answer("❌ Только для администратора.")
-        delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+@router.callback_query(F.data == "menu_admin_main")
+async def menu_admin_main(callback: types.CallbackQuery):
+    """Админ-панель"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    if not os.path.exists(VPN_DIR):
-        await message.answer("📭 Папка с конфигами пуста.")
-        return
-    
-    users_dirs = [d for d in os.listdir(VPN_DIR) if os.path.isdir(os.path.join(VPN_DIR, d))]
-    
-    if not users_dirs:
-        await message.answer("📭 Нет пользователей с конфигами.")
-        return
-    
-    text = "📂 <b>СПИСОК ВСЕХ КОНФИГОВ</b>\n\n"
-    
-    for user_dir in sorted(users_dirs):
-        user_path = os.path.join(VPN_DIR, user_dir)
-        configs = [f for f in os.listdir(user_path) if f.endswith('.vpn')]
-        if configs:
-            text += f"👤 @{user_dir} ({len(configs)}):\n"
-            for conf in configs:
-                text += f"  • {conf}\n"
-            text += "\n"
-    
-    await message.answer(text, parse_mode="HTML")
+    await callback.message.edit_text(
+        "⚙️ <b>Админ-панель</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=get_admin_main_keyboard().as_markup()
+    )
 
 
-@router.message(Command("delconfig"))
-async def cmd_delconfig(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        msg = await message.answer("❌ Только для администратора.")
-        delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+@router.callback_query(F.data == "menu_stats")
+async def menu_stats(callback: types.CallbackQuery):
+    """Статистика"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await message.answer(
-            "❌ <b>Неверный формат</b>\n\n"
-            "Используйте: <code>/delconfig username имя_файла.vpn</code>\n"
-            "Пример: <code>/delconfig Ivan_Mos Для_пк_Исиль.vpn</code>",
-            parse_mode="HTML"
-        )
+    # Импортируем и вызываем статистику из handlers/start.py
+    from handlers.start import admin_stats
+    await admin_stats(callback)
+
+
+@router.callback_query(F.data == "admin_check_expiry")
+async def admin_check_expiry(callback: types.CallbackQuery):
+    """Проверка сроков"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    username = parts[1]
-    filename = parts[2]
-    
-    user_dir = os.path.join(VPN_DIR, username)
-    file_path = os.path.join(user_dir, filename)
-    
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        await message.answer(f"✅ Конфиг <b>{filename}</b> удалён.", parse_mode="HTML")
-        audit_logger.info(f"ACTION:DELETE_CONFIG | ADMIN:{message.from_user.id} | USER:{username} | FILE:{filename}")
-    else:
-        await message.answer(f"❌ Файл <b>{filename}</b> не найден.", parse_mode="HTML")
+    from handlers.start import admin_check_expiry
+    await admin_check_expiry(callback)
 
 
-@router.message(Command("clearuser"))
-async def cmd_clearuser(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        msg = await message.answer("❌ Только для администратора.")
-        delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+@router.callback_query(F.data == "admin_users")
+async def admin_users(callback: types.CallbackQuery):
+    """Управление пользователями"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer(
-            "❌ <b>Неверный формат</b>\n\n"
-            "Используйте: <code>/clearuser username</code>\n"
-            "Пример: <code>/clearuser Ivan_Mos</code>",
-            parse_mode="HTML"
-        )
+    await callback.message.edit_text(
+        "👥 <b>Управление пользователями</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_admin_users_keyboard().as_markup()
+    )
+
+
+@router.callback_query(F.data == "menu_backup")
+async def menu_backup(callback: types.CallbackQuery):
+    """Меню бэкапов"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    username = parts[1]
-    user_dir = os.path.join(VPN_DIR, username)
+    text = (
+        "📦 <b>УПРАВЛЕНИЕ БЭКАПАМИ</b>\n\n"
+        "💡 <b>Используйте команды:</b>\n\n"
+        "<code>/backup</code> — создать резервную копию\n"
+        "<code>/list_backups</code> — показать все бэкапы\n"
+        "<code>/cleanup_backups N</code> — оставить N последних бэкапов\n\n"
+        "📝 <b>Примеры:</b>\n"
+        "<code>/backup</code>\n"
+        "<code>/list_backups</code>\n"
+        "<code>/cleanup_backups 5</code>\n\n"
+        "🤖 <b>Автобэкап:</b>\n"
+        "• Каждый день в 03:00\n"
+        "• Хранится 7 последних\n"
+        "• Уведомление приходит в ЛС"
+    )
     
-    if os.path.exists(user_dir):
-        shutil.rmtree(user_dir)
-        await message.answer(f"✅ Все конфиги пользователя <b>{username}</b> удалены.", parse_mode="HTML")
-        audit_logger.info(f"ACTION:CLEAR_USER | ADMIN:{message.from_user.id} | USER:{username}")
-    else:
-        await message.answer(f"❌ Пользователь <b>{username}</b> не найден.", parse_mode="HTML")
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("menu_admin_main").as_markup()
+    )
 
 
-@router.message(Command("clearproxy"))
-async def cmd_clearproxy(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        msg = await message.answer("❌ Только для администратора.")
-        delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+@router.callback_query(F.data == "news_start")
+async def news_start(callback: types.CallbackQuery):
+    """Публикация новости"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer(
-            "❌ <b>Неверный формат</b>\n\n"
-            "Используйте: <code>/clearproxy username</code>\n"
-            "Пример: <code>/clearproxy Ivan_Mos</code>",
-            parse_mode="HTML"
-        )
+    await callback.message.edit_text(
+        "📢 <b>Публикация новости</b>\n\nВыберите тип новости:",
+        parse_mode="HTML",
+        reply_markup=get_news_keyboard().as_markup()
+    )
+
+
+@router.callback_query(F.data == "news_type_regular")
+async def news_type_regular(callback: types.CallbackQuery):
+    """Обычная новость"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+    await callback.answer()
     
-    username = parts[1]
-    user_proxies = load_json("bot_data/user_proxies.json", {})
-    
-    found = False
-    for uid, data in list(user_proxies.items()):
-        if data.get("username") == username or data.get("name") == username:
-            del user_proxies[uid]
-            found = True
-    
-    if found:
-        save_json("bot_data/user_proxies.json", user_proxies)
-        await message.answer(f"✅ Прокси пользователя <b>{username}</b> удалены.", parse_mode="HTML")
-        audit_logger.info(f"ACTION:CLEAR_PROXY | ADMIN:{message.from_user.id} | USER:{username}")
-    else:
-        await message.answer(f"❌ Пользователь <b>{username}</b> не найден.", parse_mode="HTML")
+    await callback.message.edit_text(
+        "📰 <b>Обычная новость</b>\n\n"
+        "Отправьте текст новости.\n"
+        "Поддерживается HTML-разметка.\n\n"
+        "Пример:\n"
+        "<code>&lt;b&gt;Важная новость!&lt;/b&gt;\n"
+        "Текст новости с &lt;a href=&quot;https://example.com&quot;&gt;ссылкой&lt;/a&gt;.</code>\n\n"
+        "Для отмены отправьте /cancel",
+        parse_mode="HTML"
+    )
 
 
-# ==========================================
-# БЕССРОЧНЫЙ СТАТУС VPN
-# ==========================================
-
-@router.callback_query(F.data == "admin_permanent_menu")
-async def admin_permanent_menu(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
+@router.callback_query(F.data == "news_type_amnezia")
+async def news_type_amnezia(callback: types.CallbackQuery):
+    """Анонс обновления Amnezia VPN"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
+    text = (
+        "<b>📢 Обновление Amnezia VPN</b>\n\n"
+        "Доступна новая версия клиента для всех платформ.\n\n"
+        "<b>Для ПК:</b>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN_x64.exe'>Windows</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN.dmg'>macOS (Intel)</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN-arm64.dmg'>macOS (Apple Silicon)</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN_Linux.deb'>Linux</a>\n\n"
+        "<b>Для мобильных:</b>\n"
+        "• <a href='https://play.google.com/store/apps/details?id=org.amnezia.vpn'>Android (Google Play)</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN.apk'>Android (APK с GitHub)</a>\n"
+        "• <a href='https://apps.apple.com/app/amneziavpn/id1600529900'>iOS (App Store)</a>\n\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest'>Все версии на GitHub</a>\n\n"
+        "<b>Важно:</b> если вы меняете источник установки, может возникнуть ошибка."
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_amnezia_announce_keyboard().as_markup(),
+        disable_web_page_preview=False
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "amnezia_publish")
+async def amnezia_publish(callback: types.CallbackQuery):
+    """Опубликовать анонс обновления в чат"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    from config import ALLOWED_CHAT_ID
+    
+    text = (
+        "<b>📢 Обновление Amnezia VPN</b>\n\n"
+        "Доступна новая версия клиента для всех платформ.\n\n"
+        "<b>Для ПК:</b>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN_x64.exe'>Windows</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN.dmg'>macOS (Intel)</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN-arm64.dmg'>macOS (Apple Silicon)</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN_Linux.deb'>Linux</a>\n\n"
+        "<b>Для мобильных:</b>\n"
+        "• <a href='https://play.google.com/store/apps/details?id=org.amnezia.vpn'>Android (Google Play)</a>\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest/download/AmneziaVPN.apk'>Android (APK с GitHub)</a>\n"
+        "• <a href='https://apps.apple.com/app/amneziavpn/id1600529900'>iOS (App Store)</a>\n\n"
+        "• <a href='https://github.com/amnezia-vpn/amnezia-client/releases/latest'>Все версии на GitHub</a>\n\n"
+        "<b>Важно:</b> если вы меняете источник установки, может возникнуть ошибка."
+    )
+    
+    try:
+        await callback.bot.send_message(
+            ALLOWED_CHAT_ID,
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=False
+        )
+        await callback.answer("✅ Анонс опубликован в чате!", show_alert=True)
+        await callback.message.edit_text(
+            "⚙️ <b>Админ-панель</b>\n\nАнонс успешно опубликован!",
+            parse_mode="HTML",
+            reply_markup=get_admin_main_keyboard().as_markup()
+        )
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+
+@router.callback_query(F.data == "admin_vpn_list")
+async def admin_vpn_list(callback: types.CallbackQuery):
+    """Список VPN пользователей"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    await callback.answer()
+    
+    vpn_users = load_vpn_db()
+    if not vpn_users:
+        await callback.message.edit_text(
+            "📭 Нет активных VPN конфигов.",
+            reply_markup=get_back_keyboard("admin_users").as_markup(),
+            parse_mode="HTML"
+        )
+        return
+    
+    users = {}
+    for public_key, data in vpn_users.items():
+        username = data.get('username', 'unknown')
+        user_id_data = data.get('user_id')
+        active = data.get('active', True)
+        permanent = data.get('permanent', False)
+        expires_at = data.get('expires_at', 'не указана')
+        
+        if expires_at != 'не указана':
+            try:
+                dt = datetime.fromisoformat(expires_at)
+                expires_display = dt.strftime('%d.%m.%Y %H:%M')
+            except:
+                expires_display = expires_at
+        else:
+            expires_display = 'не указана'
+        
+        if username not in users:
+            users[username] = {
+                'user_id': user_id_data,
+                'configs': [],
+                'total': 0
+            }
+        users[username]['configs'].append({
+            'active': active,
+            'permanent': permanent,
+            'expires_at': expires_display
+        })
+        users[username]['total'] += 1
+    
+    text = "📋 <b>СПИСОК VPN ПОЛЬЗОВАТЕЛЕЙ</b>\n\n"
+    
+    for username, data in sorted(users.items()):
+        user_id_data = data['user_id']
+        username_display = f"@{username}" if username != 'unknown' else f"ID:{user_id_data}"
+        text += f"👤 {username_display} (ID: {user_id_data})\n"
+        text += f"   📁 Конфигов: {data['total']}\n"
+        for conf in data['configs']:
+            if conf['permanent']:
+                status = "♾️ Бессрочный"
+            elif conf['active']:
+                status = "✅ Активен"
+            else:
+                status = "❌ Неактивен"
+            text += f"      {status} | истекает: {conf['expires_at']}\n"
+        text += "\n"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("admin_users").as_markup()
+    )
+
+
+@router.callback_query(F.data == "admin_vpn_revoke")
+async def admin_vpn_revoke_menu(callback: types.CallbackQuery):
+    """Меню отзыва VPN"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    await callback.answer()
+    
+    text = (
+        "🗑️ <b>ОТОЗВАТЬ VPN</b>\n\n"
+        "Используйте команду:\n"
+        "<code>/revoke username</code> — отозвать ВСЕ конфиги пользователя\n"
+        "<code>/revoke username public_key</code> — отозвать конкретный\n\n"
+        "📝 <b>Примеры:</b>\n"
+        "<code>/revoke Ivan_Mos</code>\n"
+        "<code>/revoke Ivan_Mos pXsM/uIIRo0xv0AMTnVF</code>\n\n"
+        "💡 <i>Конфиг будет удалён с сервера и помечен как неактивный</i>"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("admin_users").as_markup()
+    )
+
+
+@router.callback_query(F.data == "admin_proxy_list")
+async def admin_proxy_list(callback: types.CallbackQuery):
+    """Список прокси"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    await callback.answer()
+    
+    user_proxies = load_json("bot_data/user_proxies.json", {})
+    if not user_proxies:
+        await callback.message.edit_text(
+            "📭 Нет пользователей с прокси.",
+            reply_markup=get_back_keyboard("admin_users").as_markup(),
+            parse_mode="HTML"
+        )
+        return
+    
+    stats = load_json("bot_data/stats.json", {})
+    
+    text = "🛰 <b>Список прокси пользователей</b>\n\n"
+    
+    for user_id_str, data in user_proxies.items():
+        user_id = int(user_id_str)
+        proxies = data.get("proxies", [])
+        
+        if proxies:
+            username = stats.get(user_id_str, {}).get('username')
+            if username:
+                display_name = f"@{username} (ID: {user_id_str})"
+            else:
+                display_name = f"ID: {user_id_str}"
+            
+            text += f"👤 {display_name} ({len(proxies)}):\n"
+            for p in proxies:
+                is_permanent = p.get('permanent', False)
+                status = "♾️" if is_permanent else "📅"
+                text += f"  {status} {p.get('name')} | {p.get('server')}:{p.get('port')}\n"
+            text += "\n"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("admin_users").as_markup()
+    )
+
+
+@router.callback_query(F.data == "admin_permanent_menu")
+async def admin_permanent_menu(callback: types.CallbackQuery):
+    """Бессрочный VPN"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
     await callback.answer()
     
     vpn_users = load_vpn_db()
@@ -167,8 +398,6 @@ async def admin_permanent_menu(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
         return
-    
-    stats = load_json("bot_data/stats.json", {})
     
     users = {}
     for ch, cd in vpn_users.items():
@@ -207,10 +436,185 @@ async def admin_permanent_menu(callback: types.CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "admin_permanent_proxy_menu")
+async def admin_permanent_proxy_menu(callback: types.CallbackQuery):
+    """Бессрочный прокси"""
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    await callback.answer()
+    
+    user_proxies = load_json("bot_data/user_proxies.json", {})
+    if not user_proxies:
+        await callback.message.edit_text(
+            "📭 Нет пользователей с прокси.",
+            reply_markup=get_back_keyboard("menu_admin_main").as_markup(),
+            parse_mode="HTML"
+        )
+        return
+    
+    stats = load_json("bot_data/stats.json", {})
+    
+    text = (
+        "♾️ <b>Управление бессрочным статусом прокси</b>\n\n"
+        "💡 <b>Используйте команду:</b>\n"
+        "<code>/permanent_proxy user_id имя_прокси on/off</code>\n\n"
+        "📝 <b>Примеры:</b>\n"
+        "<code>/permanent_proxy 764438696 Основной on</code>\n"
+        "<code>/permanent_proxy 764438696 Основной off</code>\n\n"
+        "📋 <b>Список пользователей с прокси:</b>\n"
+    )
+    
+    from utils.expiry import is_proxy_expired
+    
+    for user_id_str, data in user_proxies.items():
+        user_id = int(user_id_str)
+        proxies = data.get("proxies", [])
+        active_proxies = [p for p in proxies if not is_proxy_expired(user_id, p.get('name'))]
+        
+        if active_proxies:
+            username = stats.get(user_id_str, {}).get('username')
+            if username:
+                display_name = f"@{username} (ID: {user_id_str})"
+            else:
+                display_name = f"ID: {user_id_str}"
+            
+            text += f"\n👤 {display_name} ({len(active_proxies)} прокси)"
+            for p in active_proxies:
+                status = "♾️" if p.get('permanent', False) else "📅"
+                text += f"\n  {status} {p.get('name')}"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("menu_admin_main").as_markup()
+    )
+
+
+# ==========================================
+# АДМИН-ПАНЕЛЬ - КОМАНДЫ
+# ==========================================
+
+@router.message(Command("configs"))
+async def cmd_configs(message: types.Message):
+    if not await admin_private_only(message):
+        return
+    
+    if not os.path.exists(VPN_DIR):
+        await message.answer("📭 Папка с конфигами пуста.")
+        return
+    
+    users_dirs = [d for d in os.listdir(VPN_DIR) if os.path.isdir(os.path.join(VPN_DIR, d))]
+    
+    if not users_dirs:
+        await message.answer("📭 Нет пользователей с конфигами.")
+        return
+    
+    text = "📂 <b>СПИСОК ВСЕХ КОНФИГОВ</b>\n\n"
+    
+    for user_dir in sorted(users_dirs):
+        user_path = os.path.join(VPN_DIR, user_dir)
+        configs = [f for f in os.listdir(user_path) if f.endswith('.vpn')]
+        if configs:
+            text += f"👤 @{user_dir} ({len(configs)}):\n"
+            for conf in configs:
+                text += f"  • {conf}\n"
+            text += "\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+
+@router.message(Command("delconfig"))
+async def cmd_delconfig(message: types.Message):
+    if not await admin_private_only(message):
+        return
+    
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Используйте: <code>/delconfig username имя_файла.vpn</code>\n"
+            "Пример: <code>/delconfig Ivan_Mos Для_пк_Исиль.vpn</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    username = parts[1]
+    filename = parts[2]
+    
+    user_dir = os.path.join(VPN_DIR, username)
+    file_path = os.path.join(user_dir, filename)
+    
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        await message.answer(f"✅ Конфиг <b>{filename}</b> удалён.", parse_mode="HTML")
+        audit_logger.info(f"ACTION:DELETE_CONFIG | ADMIN:{message.from_user.id} | USER:{username} | FILE:{filename}")
+    else:
+        await message.answer(f"❌ Файл <b>{filename}</b> не найден.", parse_mode="HTML")
+
+
+@router.message(Command("clearuser"))
+async def cmd_clearuser(message: types.Message):
+    if not await admin_private_only(message):
+        return
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Используйте: <code>/clearuser username</code>\n"
+            "Пример: <code>/clearuser Ivan_Mos</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    username = parts[1]
+    user_dir = os.path.join(VPN_DIR, username)
+    
+    if os.path.exists(user_dir):
+        shutil.rmtree(user_dir)
+        await message.answer(f"✅ Все конфиги пользователя <b>{username}</b> удалены.", parse_mode="HTML")
+        audit_logger.info(f"ACTION:CLEAR_USER | ADMIN:{message.from_user.id} | USER:{username}")
+    else:
+        await message.answer(f"❌ Пользователь <b>{username}</b> не найден.", parse_mode="HTML")
+
+
+@router.message(Command("clearproxy"))
+async def cmd_clearproxy(message: types.Message):
+    if not await admin_private_only(message):
+        return
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Используйте: <code>/clearproxy username</code>\n"
+            "Пример: <code>/clearproxy Ivan_Mos</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    username = parts[1]
+    user_proxies = load_json("bot_data/user_proxies.json", {})
+    
+    found = False
+    for uid, data in list(user_proxies.items()):
+        if data.get("username") == username or data.get("name") == username:
+            del user_proxies[uid]
+            found = True
+    
+    if found:
+        save_json("bot_data/user_proxies.json", user_proxies)
+        await message.answer(f"✅ Прокси пользователя <b>{username}</b> удалены.", parse_mode="HTML")
+        audit_logger.info(f"ACTION:CLEAR_PROXY | ADMIN:{message.from_user.id} | USER:{username}")
+    else:
+        await message.answer(f"❌ Пользователь <b>{username}</b> не найден.", parse_mode="HTML")
+
+
 @router.message(Command("permanent"))
 async def cmd_permanent(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     parts = message.text.split(maxsplit=3)
@@ -274,282 +678,9 @@ async def cmd_permanent(message: types.Message):
         )
 
 
-# ==========================================
-# УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ - СПИСОК VPN
-# ==========================================
-
-@router.callback_query(F.data == "admin_vpn_list")
-async def admin_vpn_list(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    await callback.answer()
-    
-    vpn_users = load_vpn_db()
-    if not vpn_users:
-        await callback.message.edit_text(
-            "📭 Нет активных VPN конфигов.",
-            reply_markup=get_back_keyboard("admin_users").as_markup(),
-            parse_mode="HTML"
-        )
-        return
-    
-    users = {}
-    for public_key, data in vpn_users.items():
-        username = data.get('username', 'unknown')
-        user_id = data.get('user_id')
-        active = data.get('active', True)
-        permanent = data.get('permanent', False)
-        expires_at = data.get('expires_at', 'не указана')
-        
-        if expires_at != 'не указана':
-            try:
-                dt = datetime.fromisoformat(expires_at)
-                expires_display = dt.strftime('%d.%m.%Y %H:%M')
-            except:
-                expires_display = expires_at
-        else:
-            expires_display = 'не указана'
-        
-        if username not in users:
-            users[username] = {
-                'user_id': user_id,
-                'configs': [],
-                'total': 0
-            }
-        users[username]['configs'].append({
-            'active': active,
-            'permanent': permanent,
-            'expires_at': expires_display
-        })
-        users[username]['total'] += 1
-    
-    text = "📋 <b>СПИСОК VPN ПОЛЬЗОВАТЕЛЕЙ</b>\n\n"
-    
-    for username, data in sorted(users.items()):
-        user_id = data['user_id']
-        username_display = f"@{username}" if username != 'unknown' else f"ID:{user_id}"
-        text += f"👤 {username_display} (ID: {user_id})\n"
-        text += f"   📁 Конфигов: {data['total']}\n"
-        for conf in data['configs']:
-            if conf['permanent']:
-                status = "♾️ Бессрочный"
-            elif conf['active']:
-                status = "✅ Активен"
-            else:
-                status = "❌ Неактивен"
-            text += f"      {status} | истекает: {conf['expires_at']}\n"
-        text += "\n"
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_back_keyboard("admin_users").as_markup()
-    )
-
-
-# ==========================================
-# УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ - ОТОЗВАТЬ VPN
-# ==========================================
-
-@router.callback_query(F.data == "admin_vpn_revoke")
-async def admin_vpn_revoke_menu(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    await callback.answer()
-    
-    text = (
-        "🗑️ <b>ОТОЗВАТЬ VPN</b>\n\n"
-        "Используйте команду:\n"
-        "<code>/revoke username</code> — отозвать ВСЕ конфиги пользователя\n"
-        "<code>/revoke username public_key</code> — отозвать конкретный\n\n"
-        "📝 <b>Примеры:</b>\n"
-        "<code>/revoke Ivan_Mos</code>\n"
-        "<code>/revoke Ivan_Mos pXsM/uIIRo0xv0AMTnVF</code>\n\n"
-        "💡 <i>Конфиг будет удалён с сервера и помечен как неактивный</i>"
-    )
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_back_keyboard("admin_users").as_markup()
-    )
-
-
-@router.message(Command("revoke"))
-async def cmd_revoke(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
-        return
-    
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 2:
-        await message.answer(
-            "❌ <b>Неверный формат</b>\n\n"
-            "Используйте:\n"
-            "<code>/revoke username</code> — отозвать ВСЕ конфиги\n"
-            "<code>/revoke username public_key</code> — отозвать конкретный\n\n"
-            "📝 <b>Примеры:</b>\n"
-            "<code>/revoke Ivan_Mos</code>\n"
-            "<code>/revoke Ivan_Mos pXsM/uIIRo0xv0AMTnVF</code>",
-            parse_mode="HTML"
-        )
-        return
-    
-    username = parts[1]
-    key_part = parts[2] if len(parts) > 2 else None
-    
-    vpn_users = load_vpn_db()
-    found = False
-    revoked_count = 0
-    
-    for public_key, data in list(vpn_users.items()):
-        if data.get('username') != username:
-            continue
-        if not data.get('active', True):
-            continue
-        
-        if key_part:
-            if not public_key.startswith(key_part):
-                continue
-        
-        result = revoke_vpn_config(public_key)
-        if result.get('success'):
-            revoked_count += 1
-            found = True
-            audit_logger.info(f"ACTION:REVOKE_VPN | ADMIN:{message.from_user.id} | USER:{username} | KEY:{public_key[:20]}...")
-    
-    if found:
-        await message.answer(
-            f"✅ <b>VPN конфиги отозваны!</b>\n\n"
-            f"👤 Пользователь: @{username}\n"
-            f"🗑️ Отозвано конфигов: {revoked_count}\n\n"
-            f"💡 Пользователь больше не сможет использовать эти конфиги.",
-            parse_mode="HTML"
-        )
-    else:
-        await message.answer(
-            f"❌ Пользователь @{username} не найден или не имеет активных конфигов.",
-            parse_mode="HTML"
-        )
-
-
-# ==========================================
-# СПИСОК ПРОКСИ (АДМИН)
-# ==========================================
-
-@router.callback_query(F.data == "admin_proxy_list")
-async def admin_proxy_list(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    await callback.answer()
-    
-    user_proxies = load_json("bot_data/user_proxies.json", {})
-    if not user_proxies:
-        await callback.message.edit_text(
-            "📭 Нет пользователей с прокси.",
-            reply_markup=get_back_keyboard("admin_users").as_markup(),
-            parse_mode="HTML"
-        )
-        return
-    
-    stats = load_json("bot_data/stats.json", {})
-    
-    text = "🛰 <b>Список прокси пользователей</b>\n\n"
-    
-    for user_id_str, data in user_proxies.items():
-        user_id = int(user_id_str)
-        proxies = data.get("proxies", [])
-        
-        if proxies:
-            username = stats.get(user_id_str, {}).get('username')
-            if username:
-                display_name = f"@{username} (ID: {user_id_str})"
-            else:
-                display_name = f"ID: {user_id_str}"
-            
-            text += f"👤 {display_name} ({len(proxies)}):\n"
-            for p in proxies:
-                is_permanent = p.get('permanent', False)
-                status = "♾️" if is_permanent else "📅"
-                text += f"  {status} {p.get('name')} | {p.get('server')}:{p.get('port')}\n"
-            text += "\n"
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_back_keyboard("admin_users").as_markup()
-    )
-
-
-# ==========================================
-# БЕССРОЧНЫЙ СТАТУС ДЛЯ ПРОКСИ
-# ==========================================
-
-@router.callback_query(F.data == "admin_permanent_proxy_menu")
-async def admin_permanent_proxy_menu(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    await callback.answer()
-    
-    user_proxies = load_json("bot_data/user_proxies.json", {})
-    if not user_proxies:
-        await callback.message.edit_text(
-            "📭 Нет пользователей с прокси.",
-            reply_markup=get_back_keyboard("menu_admin_main").as_markup(),
-            parse_mode="HTML"
-        )
-        return
-    
-    stats = load_json("bot_data/stats.json", {})
-    
-    text = (
-        "♾️ <b>Управление бессрочным статусом прокси</b>\n\n"
-        "💡 <b>Используйте команду:</b>\n"
-        "<code>/permanent_proxy user_id имя_прокси on/off</code>\n\n"
-        "📝 <b>Примеры:</b>\n"
-        "<code>/permanent_proxy 764438696 Основной on</code>\n"
-        "<code>/permanent_proxy 764438696 Основной off</code>\n\n"
-        "📋 <b>Список пользователей с прокси:</b>\n"
-    )
-    
-    from utils.expiry import is_proxy_expired
-    
-    for user_id_str, data in user_proxies.items():
-        user_id = int(user_id_str)
-        proxies = data.get("proxies", [])
-        active_proxies = [p for p in proxies if not is_proxy_expired(user_id, p.get('name'))]
-        
-        if active_proxies:
-            username = stats.get(user_id_str, {}).get('username')
-            if username:
-                display_name = f"@{username} (ID: {user_id_str})"
-            else:
-                display_name = f"ID: {user_id_str}"
-            
-            text += f"\n👤 {display_name} ({len(active_proxies)} прокси)"
-            for p in active_proxies:
-                status = "♾️" if p.get('permanent', False) else "📅"
-                text += f"\n  {status} {p.get('name')}"
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_back_keyboard("menu_admin_main").as_markup()
-    )
-
-
 @router.message(Command("permanent_proxy"))
 async def cmd_permanent_proxy(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     parts = message.text.split(maxsplit=3)
@@ -621,67 +752,66 @@ async def cmd_permanent_proxy(message: types.Message):
         )
 
 
-# ==========================================
-# УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЕМ
-# ==========================================
-
-@router.callback_query(F.data == "admin_user_manage")
-async def admin_user_manage(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+@router.message(Command("revoke"))
+async def cmd_revoke(message: types.Message):
+    if not await admin_private_only(message):
         return
     
-    await callback.answer()
-    
-    vpn_users = load_vpn_db()
-    stats = load_json("bot_data/stats.json", {})
-    
-    if not vpn_users and not stats:
-        await callback.message.edit_text(
-            "📭 Нет пользователей.",
-            reply_markup=get_back_keyboard("admin_users").as_markup(),
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.answer(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Используйте:\n"
+            "<code>/revoke username</code> — отозвать ВСЕ конфиги\n"
+            "<code>/revoke username public_key</code> — отозвать конкретный\n\n"
+            "📝 <b>Примеры:</b>\n"
+            "<code>/revoke Ivan_Mos</code>\n"
+            "<code>/revoke Ivan_Mos pXsM/uIIRo0xv0AMTnVF</code>",
             parse_mode="HTML"
         )
         return
     
-    users = set()
-    for data in vpn_users.values():
-        username = data.get('username')
-        if username:
-            users.add(username)
-    for data in stats.values():
-        username = data.get('username')
-        if username:
-            users.add(username)
+    username = parts[1]
+    key_part = parts[2] if len(parts) > 2 else None
     
-    text = "👤 <b>УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЕМ</b>\n\n"
-    text += "📋 <b>Список пользователей:</b>\n"
+    vpn_users = load_vpn_db()
+    found = False
+    revoked_count = 0
     
-    for username in sorted(users):
-        config_count = sum(1 for d in vpn_users.values() if d.get('username') == username and d.get('active', True))
-        text += f"   • @{username} (конфигов: {config_count})\n"
+    for public_key, data in list(vpn_users.items()):
+        if data.get('username') != username:
+            continue
+        if not data.get('active', True):
+            continue
+        
+        if key_part:
+            if not public_key.startswith(key_part):
+                continue
+        
+        result = revoke_vpn_config(public_key)
+        if result.get('success'):
+            revoked_count += 1
+            found = True
+            audit_logger.info(f"ACTION:REVOKE_VPN | ADMIN:{message.from_user.id} | USER:{username} | KEY:{public_key[:20]}...")
     
-    text += "\n━━━━━━━━━━━━━━━━━━━━\n"
-    text += "💡 <b>Используйте команды:</b>\n\n"
-    text += "<code>/userinfo @username</code> — информация о пользователе\n"
-    text += "<code>/deluser @username</code> — удалить пользователя полностью\n"
-    text += "<code>/revoke @username</code> — отозвать конфиги\n"
-    text += "<code>/clearuser username</code> — удалить файлы конфигов\n\n"
-    text += "📝 <b>Примеры:</b>\n"
-    text += "<code>/userinfo @Ivan_Mos</code>\n"
-    text += "<code>/deluser @Ivan_Mos</code>"
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_back_keyboard("admin_users").as_markup()
-    )
+    if found:
+        await message.answer(
+            f"✅ <b>VPN конфиги отозваны!</b>\n\n"
+            f"👤 Пользователь: @{username}\n"
+            f"🗑️ Отозвано конфигов: {revoked_count}\n\n"
+            f"💡 Пользователь больше не сможет использовать эти конфиги.",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            f"❌ Пользователь @{username} не найден или не имеет активных конфигов.",
+            parse_mode="HTML"
+        )
 
 
 @router.message(Command("userinfo"))
 async def cmd_userinfo(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     parts = message.text.split(maxsplit=1)
@@ -773,8 +903,7 @@ async def cmd_userinfo(message: types.Message):
 
 @router.message(Command("deluser"))
 async def cmd_deluser(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     parts = message.text.split(maxsplit=1)
@@ -805,8 +934,7 @@ async def cmd_deluser(message: types.Message):
 
 @router.message(Command("deluser_confirm"))
 async def cmd_deluser_confirm(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     parts = message.text.split(maxsplit=1)
@@ -870,41 +998,9 @@ async def cmd_deluser_confirm(message: types.Message):
 # БЭКАПЫ
 # ==========================================
 
-@router.callback_query(F.data == "menu_backup")
-async def menu_backup(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    await callback.answer()
-    
-    text = (
-        "📦 <b>УПРАВЛЕНИЕ БЭКАПАМИ</b>\n\n"
-        "💡 <b>Используйте команды:</b>\n\n"
-        "<code>/backup</code> — создать резервную копию\n"
-        "<code>/list_backups</code> — показать все бэкапы\n"
-        "<code>/cleanup_backups N</code> — оставить N последних бэкапов\n\n"
-        "📝 <b>Примеры:</b>\n"
-        "<code>/backup</code>\n"
-        "<code>/list_backups</code>\n"
-        "<code>/cleanup_backups 5</code>\n\n"
-        "🤖 <b>Автобэкап:</b>\n"
-        "• Каждый день в 03:00\n"
-        "• Хранится 7 последних\n"
-        "• Уведомление приходит в ЛС"
-    )
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_back_keyboard("menu_admin_main").as_markup()
-    )
-
-
 @router.message(Command("backup"))
 async def cmd_backup(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     await message.answer("⏳ Создаю бэкап...")
@@ -942,8 +1038,7 @@ async def cmd_backup(message: types.Message):
 
 @router.message(Command("list_backups"))
 async def cmd_list_backups(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     if not os.path.exists(BACKUP_DIR):
@@ -984,8 +1079,7 @@ async def cmd_list_backups(message: types.Message):
 
 @router.message(Command("cleanup_backups"))
 async def cmd_cleanup_backups(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Только для администратора.")
+    if not await admin_private_only(message):
         return
     
     parts = message.text.split(maxsplit=1)

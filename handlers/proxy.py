@@ -1,415 +1,422 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-import datetime
-import urllib.parse
-from config import ADMIN_IDS, USER_PROXIES_FILE, PROXY_EXPIRY_DAYS, is_allowed
-from utils.auto_delete import schedule_delete, delete_temp, delete_user, delete_proxy_card, delete_admin
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from config import ADMIN_IDS, USER_PROXIES_FILE
 from utils.logger import standard_logger, audit_logger
-from utils.stats import update_stats
-from utils.expiry import get_proxy_age
-from utils.notifications import send_proxy_expiry_notification
-from utils.rate_limit import is_rate_limited
 from database.storage import load_json, save_json
-from states.forms import ProxyRequest
 from keyboards.inline import (
-    get_admin_proxy_request_keyboard as get_proxy_request_keyboard,
-    get_proxy_list_keyboard_compat as get_proxy_list_keyboard,
-    get_proxy_card_keyboard
+    get_proxy_main_keyboard,
+    get_proxy_list_keyboard,
+    get_proxy_empty_keyboard,
+    get_proxy_request_keyboard,
+    get_back_keyboard
 )
+from states.forms import ProxyRequest, ProxyExtend
+from handlers.main_menu import require_private_chat
+import urllib.parse
+from datetime import datetime, timedelta
 
 router = Router()
 logger = standard_logger
 
-proxy_pending_admin = {}
-my_proxy_cache = {}
 
+# ==========================================
+# МЕНЮ ПРОКСИ
+# ==========================================
 
-def format_proxy_card(name: str, server: str, port: int, secret: str) -> str:
-    return (
-        f"🔒 <b>{name}</b>\n\n"
-        f"🌐 <b>Сервер:</b> {server}\n"
-        f"🔌 <b>Порт:</b> {port}\n"
-        f"🔑 <b>Секрет:</b> <code>{secret}</code>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📋 <b>Как подключить вручную:</b>\n"
-        f"1. Настройки → Данные и память → Прокси\n"
-        f"2. Добавить прокси → MTProto\n"
-        f"3. Ввести данные выше\n"
-        f"4. Нажать Готово\n\n"
-        f"💡 <i>Сохрани секрет в заметках!</i>"
+@router.callback_query(F.data == "menu_proxy_main")
+async def menu_proxy_main(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "🛰 <b>Управление прокси</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_proxy_main_keyboard().as_markup()
     )
 
 
-def format_proxy_card_with_button(name: str, server: str, port: int, secret: str):
-    tg_link = f"tg://proxy?server={server}&port={port}&secret={secret}"
-    text = (
-        f"🔒 <b>{name}</b>\n\n"
-        f"🌐 <b>Сервер:</b> {server}\n"
-        f"🔌 <b>Порт:</b> {port}\n"
-        f"🔑 <b>Секрет:</b> <code>{secret}</code>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📋 <b>Как подключить вручную:</b>\n"
-        f"1. Настройки → Данные и память → Прокси\n"
-        f"2. Добавить прокси → MTProto\n"
-        f"3. Ввести данные выше\n"
-        f"4. Нажать Готово\n\n"
-        f"💡 <i>Сохрани секрет в заметках!</i>"
-    )
-    return text, tg_link
-
-
-@router.message(Command("request_proxy"))
-async def cmd_request_proxy(message: types.Message):
-    # 🔒 ПРОВЕРКА: только в ЛС!
-    if message.chat.type != "private":
-        msg = await message.answer(
-            "🔐 Запрос прокси работает только в личных сообщениях!\n\n"
-            f"👉 Напиши боту в ЛС: t.me/{(await message.bot.get_me()).username}",
-            parse_mode="HTML",
-            disable_web_page_preview=True
-        )
-        delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+@router.callback_query(F.data == "menu_proxy")
+async def menu_proxy(callback: types.CallbackQuery):
+    if not await require_private_chat(callback, "просмотр прокси"):
         return
-
-    is_limited, retry_after = is_rate_limited(message.from_user.id, "request_proxy")
-    if is_limited:
-        msg = await message.answer(
-            f"⏳ Слишком много запросов. Попробуйте через {retry_after} сек.",
+    
+    await callback.answer()
+    
+    user_id = callback.from_user.id
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+    
+    if not proxies:
+        text = "🛰 <b>Мои прокси</b>\n\n"
+        text += "У тебя пока нет прокси.\n\n"
+        text += "Нажми кнопку ниже, чтобы запросить прокси у админа."
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_proxy_empty_keyboard().as_markup(),
             parse_mode="HTML"
         )
-        delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-        return
-
-    user_id = message.from_user.id
-    username = message.from_user.username or f"ID:{user_id}"
-    update_stats(message.from_user, "proxy_request")
-    builder = get_proxy_request_keyboard(user_id)
-
-    # ✅ ЛОГИРОВАНИЕ ЗАПРОСА ПРОКСИ (ПЕРЕД отправкой админу)
-    logger.info(
-        f"🛰 ЗАПРОС ПРОКСИ | "
-        f"От: @{username} (ID: {user_id})"
-    )
-    audit_logger.info(
-        f"ACTION:PROXY_REQUEST | "
-        f"USER:{user_id} | "
-        f"USERNAME:{username}"
-    )
-
-    request_msg = (
-        f"🛰 <b>ЗАПРОС НОВОГО ПРОКСИ</b>\n\n"
-        f"👤 @{username}\n📱 ID: {user_id}\n\n"
-        f"Ждёт персональный прокси-ключ!"
-    )
-
-    sent_count = 0
-    for admin_id in ADMIN_IDS:
-        try:
-            msg = await message.bot.send_message(
-                admin_id, request_msg, reply_markup=builder.as_markup(), parse_mode="HTML"
-            )
-            proxy_pending_admin[user_id] = {"msg_id": msg.message_id, "chat_id": msg.chat.id, "admin_id": admin_id}
-            sent_count += 1
-            logger.debug(f"Запрос прокси от @{username} отправлен админу {admin_id}")
-        except Exception as e:
-            logger.error(f"❌ Ошибка отправки запроса прокси админу {admin_id}: {e}")
-            audit_logger.error(
-                f"ACTION:PROXY_REQUEST_SEND_FAILED | "
-                f"USER:{user_id} | "
-                f"ADMIN:{admin_id} | "
-                f"ERROR:{e}"
-            )
-
-    msg = await message.answer(
-        f"✅ Запрос на прокси отправлен админу!\nОжидай ответа...\n💡 Отправлено {sent_count} админу(ам)",
-        parse_mode="HTML"
-    )
-    delete_temp(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-
-
-@router.callback_query(F.data.startswith("proxy_req_issue_"))
-async def proxy_admin_start_issue(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Только админ", show_alert=True)
-        return
-    user_id = int(callback.data.split("_")[-1])
-    if user_id in proxy_pending_admin:
-        proxy_pending_admin[user_id]["admin_id"] = callback.from_user.id
-
-    await state.set_state(ProxyRequest.waiting_for_name)
-    msg = await callback.message.answer(
-        f"📝 <b>Ввод данных прокси для пользователя ID {user_id}</b>\n\n"
-        f"<b>Шаг 1:</b> Напиши название прокси\n(например: Основной, Резервный)\n\n"
-        f"Или нажми /cancel для отмены",
-        parse_mode="HTML"
-    )
-    delete_admin(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=callback.from_user.id, chat_type=callback.message.chat.type)
-    await callback.answer()
-
-
-@router.message(ProxyRequest.waiting_for_name, F.text)
-async def proxy_admin_get_name(message: types.Message, state: FSMContext):
-    admin_id = message.from_user.id
-    target_user_id = None
-    for uid, data in proxy_pending_admin.items():
-        if data.get("admin_id") == admin_id:
-            target_user_id = uid
-            break
-
-    if not target_user_id:
-        msg = await message.answer("❌ Нет активного запроса прокси.")
-        delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-        await state.clear()
-        return
-
-    proxy_name = message.text.strip()
-    proxy_pending_admin[target_user_id]["proxy_name"] = proxy_name
-    await state.set_state(ProxyRequest.waiting_for_data)
-
-    msg = await message.answer(
-        f"📝 <b>Название: {proxy_name}</b>\n\n"
-        f"<b>Шаг 2:</b> Введи данные прокси\n\n"
-        f"<b>Формат 1:</b> ссылка tg://proxy?server=...&port=...&secret=...\n"
-        f"<b>Формат 2:</b> server|port|secret\n\n"
-        f"Или нажми /cancel для отмены",
-        parse_mode="HTML"
-    )
-    delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-
-
-@router.message(ProxyRequest.waiting_for_data, F.text)
-async def proxy_admin_save_data(message: types.Message, state: FSMContext):
-    text = message.text.strip()
-    admin_id = message.from_user.id
-    target_user_id = None
-    for uid, data in proxy_pending_admin.items():
-        if data.get("admin_id") == admin_id:
-            target_user_id = uid
-            break
-
-    if not target_user_id:
-        msg = await message.answer("❌ Нет активного запроса прокси.")
-        delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-        await state.clear()
-        return
-
-    try:
-        proxy_data = {}
-        if text.startswith("tg://"):
-            parsed = urllib.parse.urlparse(text)
-            params = urllib.parse.parse_qs(parsed.query)
-            proxy_data = {"server": params.get("server", [""])[0], "port": int(params.get("port", [0])[0]), "secret": params.get("secret", [""])[0]}
-        elif "|" in text:
-            parts = text.split("|")
-            if len(parts) != 3:
-                msg = await message.answer("❌ Неверный формат. Нужно: server|port|secret")
-                delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-                return
-            proxy_data = {"server": parts[0].strip(), "port": int(parts[1].strip()), "secret": parts[2].strip()}
-        else:
-            msg = await message.answer("❌ Неверный формат.\nИспользуй ссылку или server|port|secret", parse_mode="HTML")
-            delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-            return
-
-        proxy_name = proxy_pending_admin[target_user_id].get("proxy_name", "Прокси")
-        user_proxies = load_json(USER_PROXIES_FILE, {})
-        if str(target_user_id) not in user_proxies:
-            user_proxies[str(target_user_id)] = {"proxies": []}
-
-        user_proxies[str(target_user_id)]["proxies"].append({
-            "name": proxy_name, "server": proxy_data["server"], "port": proxy_data["port"],
-            "secret": proxy_data["secret"], "issued_at": datetime.datetime.now().isoformat(), "issued_by": admin_id
-        })
-        save_json(USER_PROXIES_FILE, user_proxies)
-
-        try:
-            target_user = await message.bot.get_chat(target_user_id)
-            target_username = target_user.username or f"ID:{target_user_id}"
-        except Exception:
-            target_username = f"ID:{target_user_id}"
-
-        tg_link = f"tg://proxy?server={proxy_data['server']}&port={proxy_data['port']}&secret={proxy_data['secret']}"
-        card_text, _ = format_proxy_card_with_button(proxy_name, proxy_data["server"], proxy_data["port"], proxy_data["secret"])
+    else:
+        text = f"🛰 <b>Мои прокси</b>\n\n"
+        text += f"Найдено: <b>{len(proxies)}</b>\n"
+        text += "Выбери прокси:"
         
-        # ✅ КАРТОЧКА ПРОКСИ: 5 минут
-        msg_card = await message.bot.send_message(
-            target_user_id, card_text, reply_markup=get_proxy_card_keyboard(tg_link).as_markup(),
-            parse_mode="HTML", disable_web_page_preview=False
-        )
-        delete_proxy_card(message.bot, target_user_id, msg_card.message_id, user_id=target_user_id, chat_type="private")
-
-        msg = await message.answer(f"✅ Прокси <b>{proxy_name}</b> добавлен для @{target_username}!", parse_mode="HTML")
-        delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-
-        # ✅ БЕЗОПАСНАЯ ПРОВЕРКА наличия chat_id и msg_id
-        info = proxy_pending_admin.get(target_user_id)
-        if info:
-            chat_id = info.get("chat_id")
-            msg_id = info.get("msg_id")
-            
-            if chat_id and msg_id:
-                try:
-                    await message.bot.edit_message_text(
-                        chat_id=chat_id, 
-                        message_id=msg_id,
-                        text=f"✅ <b>Прокси выдан!</b>\n\n👤 Пользователь ID: {target_user_id}\n📝 Название: {proxy_name}\n📤 Отправлено: {datetime.datetime.now().strftime('%H:%M:%S')}",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    logger.warning(f"Не удалось отредактировать сообщение: {e}")
-            else:
-                logger.debug(f"Нет chat_id/msg_id для пользователя {target_user_id}, пропускаем редактирование")
-            
-            del proxy_pending_admin[target_user_id]
-
-        # ✅ УЛУЧШЕННОЕ ЛОГИРОВАНИЕ ВЫДАЧИ ПРОКСИ
-        logger.info(
-            f"📤 ПРОКСИ ВЫДАН | "
-            f"Название: '{proxy_name}' | "
-            f"Пользователь: {target_user_id} (@{target_username}) | "
-            f"Админ: {admin_id} | "
-            f"Сервер: {proxy_data['server']}:{proxy_data['port']}"
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_proxy_list_keyboard(proxies, user_id).as_markup(),
+            parse_mode="HTML"
         )
 
-        audit_logger.info(
-            f"ACTION:PROXY_ISSUE | "
-            f"ADMIN:{admin_id} | "
-            f"USER:{target_user_id} | "
-            f"USERNAME:{target_username} | "
-            f"PROXY_NAME:{proxy_name} | "
-            f"SERVER:{proxy_data['server']}:{proxy_data['port']}"
-        )
 
-    except Exception as e:
-        msg = await message.answer(f"❌ Ошибка: {e}")
-        delete_admin(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
+# ==========================================
+# ВЫБОР ПРОКСИ (КАРТОЧКА)
+# ==========================================
 
-    await state.clear()
-
-
-@router.callback_query(F.data.startswith("proxy_req_reject_"))
-async def proxy_admin_reject(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Только админ", show_alert=True)
+@router.callback_query(F.data.startswith("proxy_select_"))
+async def proxy_select(callback: types.CallbackQuery):
+    if not await require_private_chat(callback, "просмотр прокси"):
         return
-    user_id = int(callback.data.split("_")[-1])
-    try:
-        msg = await callback.message.bot.send_message(user_id, "📄 <b>Запрос на прокси отклонён</b>\n\nЕсли считаешь это ошибкой — напиши админу.", parse_mode="HTML")
-        delete_user(callback.message.bot, user_id, msg.message_id, user_id=user_id, chat_type="private")
-        await callback.message.edit_text(f"❌ <b>Запрос отклонён</b>\n🕐 Время: {datetime.datetime.now().strftime('%H:%M:%S')}", parse_mode="HTML")
-    except Exception:
-        pass
-    if user_id in proxy_pending_admin:
-        del proxy_pending_admin[user_id]
+    
     await callback.answer()
-
-
-@router.message(Command("my_proxy"))
-async def cmd_my_proxy(message: types.Message):
-    # 🔒 ПРОВЕРКА: только в ЛС!
-    if message.chat.type != "private":
-        msg = await message.answer(
-            "🔐 Просмотр прокси работает только в личных сообщениях!\n\n"
-            f"👉 Напиши боту в ЛС: t.me/{(await message.bot.get_me()).username}",
-            parse_mode="HTML",
-            disable_web_page_preview=True
-        )
-        delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-        return
-
-    is_limited, retry_after = is_rate_limited(message.from_user.id, "my_proxy")
-    if is_limited:
-        msg = await message.answer(f"⏳ Слишком много запросов. Попробуйте через {retry_after} сек.", parse_mode="HTML")
-        delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-        return
-
-    user_id = message.from_user.id
-    user_proxies = load_json(USER_PROXIES_FILE, {})
-
-    if str(user_id) not in user_proxies or "proxies" not in user_proxies[str(user_id)] or not user_proxies[str(user_id)]["proxies"]:
-        msg = await message.answer("❌ У тебя пока нет прокси.\n\nИспользуй /request_proxy чтобы запросить.", parse_mode="HTML")
-        delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-        return
-
-    proxies = user_proxies[str(user_id)]["proxies"]
-    my_proxy_cache[user_id] = proxies
-
-    expired_proxies, expiring_proxies = [], []
-    for proxy in proxies:
-        age = get_proxy_age(user_id, proxy["name"])
-        if age["status"] == "expired":
-            expired_proxies.append({"name": proxy["name"], "days_expired": abs(age["days_left"])})
-        elif age["status"] == "expiring_soon":
-            expiring_proxies.append({"name": proxy["name"], "days_left": age["days_left"]})
-
-    if expired_proxies or expiring_proxies:
-        username = message.from_user.username or f"ID:{user_id}"
-        await send_proxy_expiry_notification(message.bot, user_id, username, expired_proxies, expiring_proxies)
-
-    builder = InlineKeyboardBuilder()
-    for i, proxy in enumerate(proxies):
-        age = get_proxy_age(user_id, proxy["name"])
-        if age["status"] == "expired":
-            button_text = f"❌ {proxy['name']} (истёк)"
-        elif age["status"] == "expiring_soon":
-            button_text = f"⚠️ {proxy['name']} ({age['days_left']} дн.)"
-        else:
-            button_text = f"🔹 {proxy['name']}"
-        builder.button(text=button_text, callback_data=f"proxy_show_{i}")
-    builder.adjust(1)
-
-    text = f"👁 <b>Твои прокси ({len(proxies)} шт.):</b>\n\n"
-    if expired_proxies or expiring_proxies:
-        text += "━━━━━━━━━━━━━━━━━━━━\n"
-        for proxy in expired_proxies: text += f"❌ <b>{proxy['name']}</b> — ИСТЁК {proxy['days_expired']} дн. назад!\n"
-        for proxy in expiring_proxies: text += f"⚠️ <b>{proxy['name']}</b> — истекает через {proxy['days_left']} дн.\n"
-        text += "━━━━━━━━━━━━━━━━━━━━\n\n💡 Если прокси истёк — запроси новый через /request_proxy\n\n"
-    text += "Выбери нужный:"
-
-    msg = await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    delete_user(message.bot, message.chat.id, msg.message_id, user_id=message.from_user.id, chat_type=message.chat.type)
-
-
-@router.callback_query(F.data.startswith("proxy_show_"))
-async def process_proxy_show(callback: types.CallbackQuery):
-    await callback.answer()
+    
     user_id = callback.from_user.id
-    proxies = my_proxy_cache.get(user_id)
-
-    if not proxies:
-        msg = await callback.message.answer("❌ Данные прокси не найдены. Используй /my_proxy снова.", parse_mode="HTML")
-        delete_user(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=user_id, chat_type=callback.message.chat.type)
-        return
-
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+    
     try:
         index = int(callback.data.split("_")[-1])
         proxy = proxies[index]
     except (IndexError, ValueError):
-        msg = await callback.message.answer("❌ Прокси не найден.", parse_mode="HTML")
-        delete_user(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=user_id, chat_type=callback.message.chat.type)
+        await callback.answer("❌ Прокси не найден", show_alert=True)
         return
+    
+    username = callback.from_user.username or f"ID:{user_id}"
+    tg_link = f"tg://proxy?server={proxy['server']}&port={proxy['port']}&secret={proxy['secret']}"
+    
+    issued_at_raw = proxy.get('issued_at', 'не указана')
+    if issued_at_raw != 'не указана':
+        try:
+            issued_dt = datetime.fromisoformat(issued_at_raw)
+            issued_at = issued_dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            issued_at = issued_at_raw
+    else:
+        issued_at = 'не указана'
+    
+    is_permanent = proxy.get('permanent', False)
+    
+    expires_at = None
+    days_left = None
+    is_expired = False
+    
+    if not is_permanent and issued_at_raw != 'не указана':
+        try:
+            issued_date = datetime.fromisoformat(issued_at_raw)
+            expires_date = issued_date + timedelta(days=30)
+            expires_at = expires_date.strftime('%d.%m.%Y')
+            days_left = (expires_date - datetime.now()).days
+            if days_left < 0:
+                is_expired = True
+        except:
+            pass
+    
+    if is_permanent:
+        status = "♾️ Бессрочный"
+    elif is_expired:
+        status = "🔴 Истек"
+    elif days_left is not None and days_left <= 3:
+        status = f"🟡 Истекает через {days_left} дн."
+    else:
+        status = "🟢 Активен"
+    
+    text = (
+        f"🔒 <b>Карточка прокси</b>\n\n"
+        f"👤 <b>Пользователь:</b> @{username}\n"
+        f"📁 <b>Имя:</b> {proxy['name']}\n"
+        f"🌐 <b>Сервер:</b> {proxy['server']}\n"
+        f"🔌 <b>Порт:</b> {proxy['port']}\n"
+        f"📅 <b>Выдан:</b> {issued_at}\n"
+        f"📅 <b>Истекает:</b> {expires_at if expires_at else ('♾️ Бессрочный' if is_permanent else 'не указана')}\n"
+        f"📊 <b>Статус:</b> {status}\n"
+    )
+    
+    buttons = []
+    
+    if not is_expired or is_permanent:
+        buttons.append([InlineKeyboardButton(
+            text="📱 Подключить в Telegram",
+            url=tg_link
+        )])
+    
+    if not is_permanent:
+        if is_expired or (days_left is not None and days_left <= 5):
+            buttons.append([InlineKeyboardButton(
+                text="🔄 Запросить продление",
+                callback_data=f"proxy_extend_{user_id}_{index}"
+            )])
+    
+    buttons.append([InlineKeyboardButton(
+        text="🔙 К списку",
+        callback_data="menu_proxy"
+    )])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
 
-    card_text, tg_link = format_proxy_card_with_button(proxy["name"], proxy["server"], proxy["port"], proxy["secret"])
-    builder = get_proxy_card_keyboard(tg_link)
 
-    # ✅ КАРТОЧКА ПРОКСИ: 5 минут
-    msg = await callback.message.answer(card_text, reply_markup=builder.as_markup(), parse_mode="HTML", disable_web_page_preview=False)
-    delete_proxy_card(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=user_id, chat_type=callback.message.chat.type)
+# ==========================================
+# ЗАПРОС НОВОГО ПРОКСИ
+# ==========================================
 
-
-@router.callback_query(F.data == "proxy_list")
-async def process_proxy_list(callback: types.CallbackQuery):
+@router.callback_query(F.data == "proxy_request")
+async def proxy_request(callback: types.CallbackQuery):
+    if not await require_private_chat(callback, "запрос прокси"):
+        return
+    
     await callback.answer()
-    user_id = callback.from_user.id
-    proxies = my_proxy_cache.get(user_id)
+    
+    user = callback.from_user
+    username = user.username or f"ID:{user.id}"
+    
+    request_msg = (
+        f"🛰 <b>НОВЫЙ ЗАПРОС ПРОКСИ</b>\n\n"
+        f"👤 @{username}\n"
+        f"📱 ID: {user.id}\n\n"
+        f"Ждёт персональный прокси-ключ!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📝 Выписать ключ",
+                callback_data=f"proxy_issue_{user.id}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"proxy_reject_{user.id}"
+            )
+        ]
+    ])
+    
+    sent_count = 0
+    for admin_id in ADMIN_IDS:
+        try:
+            await callback.bot.send_message(
+                admin_id,
+                request_msg,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            sent_count += 1
+        except Exception as e:
+            logger.error(f"Ошибка отправки админу {admin_id}: {e}")
+    
+    text = (
+        "✅ <b>Запрос отправлен!</b>\n\n"
+        f"Админ получил твою заявку.\n"
+        f"Ожидай ответа...\n\n"
+        f"💡 <i>Отправлено {sent_count} админу(ам)</i>"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_proxy_request_keyboard().as_markup(),
+        parse_mode="HTML"
+    )
 
-    if not proxies:
-        msg = await callback.message.answer("📄 Данные прокси не найдены. Используй /my_proxy снова.", parse_mode="HTML")
-        delete_user(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=user_id, chat_type=callback.message.chat.type)
+
+# ==========================================
+# ПРОДЛЕНИЕ ПРОКСИ
+# ==========================================
+
+@router.callback_query(F.data.startswith("proxy_extend_"))
+async def proxy_extend_request(callback: types.CallbackQuery):
+    if not await require_private_chat(callback, "запрос продления"):
         return
+    
+    await callback.answer()
+    
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    
+    try:
+        user_id = int(parts[1])
+        proxy_index = int(parts[2])
+    except ValueError:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    
+    if callback.from_user.id != user_id:
+        await callback.answer("⛔ Это не ваш прокси!", show_alert=True)
+        return
+    
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(user_id), {}).get("proxies", [])
+    
+    if proxy_index >= len(proxies):
+        await callback.answer("❌ Прокси не найден", show_alert=True)
+        return
+    
+    proxy = proxies[proxy_index]
+    username = callback.from_user.username or f"ID:{user_id}"
+    user_mention = f"@{username}" if callback.from_user.username else f"ID:{user_id}"
+    
+    admin_text = (
+        f"🔄 <b>Запрос на продление прокси</b>\n\n"
+        f"👤 <b>Пользователь:</b> {user_mention}\n"
+        f"📁 <b>Имя:</b> {proxy['name']}\n"
+        f"🌐 <b>Сервер:</b> {proxy['server']}\n"
+        f"📅 <b>Выдан:</b> {proxy.get('issued_at', 'не указана')}\n\n"
+        f"Действия:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Одобрить продление",
+                callback_data=f"proxy_approve_extend_{user_id}_{proxy_index}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"proxy_reject_extend_{user_id}_{proxy_index}"
+            )
+        ]
+    ])
+    
+    for admin_id in ADMIN_IDS:
+        try:
+            await callback.bot.send_message(
+                admin_id,
+                admin_text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить запрос админу {admin_id}: {e}")
+    
+    await callback.answer("✅ Запрос на продление отправлен администратору!")
+    await callback.message.edit_text(
+        "🔄 <b>Запрос на продление отправлен!</b>\n\n"
+        "Администратор рассмотрит ваш запрос в ближайшее время.\n"
+        "Вы получите уведомление о решении.",
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard("menu_proxy").as_markup()
+    )
+    
+    audit_logger.info(
+        f"ACTION:PROXY_EXTEND_REQUEST | USER:{user_id} | "
+        f"PROXY:{proxy['name']} | INDEX:{proxy_index}"
+    )
 
-    builder = get_proxy_list_keyboard(proxies)
-    msg = await callback.message.answer(f"👁 <b>Твои прокси ({len(proxies)} шт.):</b>\n\n📝 Выбери нужный:", reply_markup=builder.as_markup(), parse_mode="HTML")
-    delete_user(callback.message.bot, callback.message.chat.id, msg.message_id, user_id=user_id, chat_type=callback.message.chat.type)
+
+@router.callback_query(F.data.startswith("proxy_approve_extend_"))
+async def proxy_approve_extend(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    
+    try:
+        target_user_id = int(parts[2])
+        proxy_index = int(parts[3])
+    except ValueError:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(target_user_id), {}).get("proxies", [])
+    
+    if proxy_index >= len(proxies):
+        await callback.answer("❌ Прокси не найден", show_alert=True)
+        return
+    
+    proxies[proxy_index]['issued_at'] = datetime.now().isoformat()
+    user_proxies[str(target_user_id)]["proxies"] = proxies
+    save_json(USER_PROXIES_FILE, user_proxies)
+    
+    try:
+        await callback.bot.send_message(
+            target_user_id,
+            f"✅ <b>Ваш запрос на продление прокси одобрен!</b>\n\n"
+            f"📁 <b>Прокси:</b> {proxies[proxy_index]['name']}\n"
+            f"📅 <b>Новая дата выдачи:</b> {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"💡 Прокси продлён на 30 дней.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {target_user_id}: {e}")
+    
+    await callback.answer("✅ Прокси продлён на 30 дней!")
+    await callback.message.edit_text(
+        f"✅ <b>Продление одобрено!</b>\n\n"
+        f"👤 Пользователь получил уведомление.\n"
+        f"📁 Прокси: {proxies[proxy_index]['name']}",
+        parse_mode="HTML"
+    )
+    
+    audit_logger.info(
+        f"ACTION:PROXY_APPROVE_EXTEND | ADMIN:{user_id} | "
+        f"USER:{target_user_id} | PROXY:{proxies[proxy_index]['name']}"
+    )
+
+
+@router.callback_query(F.data.startswith("proxy_reject_extend_"))
+async def proxy_reject_extend(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    
+    try:
+        target_user_id = int(parts[2])
+        proxy_index = int(parts[3])
+    except ValueError:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    
+    user_proxies = load_json(USER_PROXIES_FILE, {})
+    proxies = user_proxies.get(str(target_user_id), {}).get("proxies", [])
+    proxy_name = proxies[proxy_index]['name'] if proxy_index < len(proxies) else "неизвестный"
+    
+    try:
+        await callback.bot.send_message(
+            target_user_id,
+            f"❌ <b>Ваш запрос на продление прокси отклонён</b>\n\n"
+            f"Администратор отклонил ваш запрос.\n"
+            f"Если у вас есть вопросы — обратитесь к администратору.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {target_user_id}: {e}")
+    
+    await callback.answer("❌ Запрос отклонен")
+    await callback.message.edit_text(
+        f"❌ <b>Запрос отклонен</b>\n\n"
+        f"👤 Пользователь получил уведомление об отказе.\n"
+        f"📁 Прокси: {proxy_name}",
+        parse_mode="HTML"
+    )
+    
+    audit_logger.info(
+        f"ACTION:PROXY_REJECT_EXTEND | ADMIN:{user_id} | "
+        f"USER:{target_user_id} | PROXY:{proxy_name}"
+    )
