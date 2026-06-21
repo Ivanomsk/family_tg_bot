@@ -1,3 +1,4 @@
+from repositories.vpn_repository import load_vpn_db
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from handlers.vpn.common import logger, get_user_configs, get_user_dir

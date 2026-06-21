@@ -1,4 +1,4 @@
-from aiogram import Router, types
+from aiogram import Router, F, types
 from aiogram.filters import Command
 from config import ADMIN_IDS
 from services.auth_service import is_admin

@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from states.vpn_states import VpnIssue
+from states.forms import VpnIssue
 from services.auth_service import is_admin
 from services.vpn_service import issue_vpn_config
 from utils.logger import logger, audit_logger

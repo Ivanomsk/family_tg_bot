@@ -69,3 +69,5 @@ def setup_audit_logger(name: str = "audit") -> logging.Logger:
 # Глобальные экземпляры
 standard_logger = setup_standard_logger()
 audit_logger = setup_audit_logger()
+# Совместимость со старым кодом
+logger = standard_logger

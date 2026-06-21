@@ -1,7 +1,7 @@
 from aiogram import Router, types
 
 from repositories.vpn_repository import load_vpn_db
-from services.vpn_service import extend_vpn_user
+from services.vpn_extend_service import extend_vpn_config
 from config import ADMIN_IDS
 
 router = Router()
