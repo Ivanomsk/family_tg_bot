@@ -1,7 +1,8 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from datetime import datetime
-from utils.vpn_manager import extend_vpn_config, VPN_USERS_FILE, load_vpn_db
+from repositories.vpn_repository import load_vpn_db
+from services.vpn_service import extend_vpn_config
 from utils.logger import audit_logger, standard_logger
 from keyboards.inline import (
     get_extend_success_keyboard,

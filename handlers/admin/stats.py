@@ -2,7 +2,11 @@ from aiogram import Router, types, F
 from config import ADMIN_IDS, USER_PROXIES_FILE
 from utils.logger import standard_logger
 from database.storage import load_json
-from utils.vpn_manager import load_vpn_db, format_size, get_user_traffic_from_clients_table
+from repositories.vpn_repository import load_vpn_db
+from services.traffic_service import (
+    format_size,
+    get_user_traffic_from_clients_table,
+)
 from keyboards.inline import get_back_keyboard
 
 router = Router()

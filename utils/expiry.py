@@ -45,7 +45,7 @@ def get_vpn_config_age(username: str, filename: str) -> dict:
 
 def check_all_vpn_expiry():
     """Проверяет все VPN конфиги на истечение (из vpn_users.json)"""
-    from utils.vpn_manager import load_vpn_db
+    from repositories.vpn_repository import load_vpn_db
     db = load_vpn_db()
     expired = []
     expiring = []

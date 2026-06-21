@@ -1,0 +1,11 @@
+from services.ssh_service import load_env
+
+ENV = load_env()
+
+DOCKER_CONTAINER = ENV.get("DOCKER_CONTAINER", "amnezia-awg2")
+WG_INTERFACE = ENV.get("WG_INTERFACE", "awg0")
+WG_SERVER_PORT = int(ENV.get("WG_SERVER_PORT", 45135))
+WG_SERVER_PUBLIC_KEY = ENV.get("WG_SERVER_PUBLIC_KEY", "")
+WG_PRESHARED_KEY = ENV.get("WG_PRESHARED_KEY", "")
+WG_SUBNET = "10.8.1.0/24"
+WG_CONFIG_EXPIRY_DAYS = 30

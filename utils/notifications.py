@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from config import ALLOWED_CHAT_ID, VPN_DIR, VPN_EXPIRY_DAYS, USER_PROXIES_FILE, PROXY_EXPIRY_DAYS
 from database.storage import load_json, save_json
-from utils.vpn_manager import VPN_USERS_FILE, load_vpn_db
+from repositories.vpn_repository import load_vpn_db
 from utils.expiry import get_proxy_expiry_date, is_proxy_expired
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 

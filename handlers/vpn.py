@@ -6,7 +6,7 @@ from config import ADMIN_IDS, VPN_DIR
 from utils.auto_delete import delete_temp
 from utils.logger import standard_logger, audit_logger
 from database.storage import load_json, save_json
-from utils.vpn_manager import VPN_USERS_FILE, load_vpn_db
+from repositories.vpn_repository import load_vpn_db
 from keyboards.inline import (
     get_vpn_main_keyboard,
     get_vpn_list_keyboard,

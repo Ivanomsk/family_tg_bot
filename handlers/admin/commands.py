@@ -1,20 +1,17 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from config import ADMIN_IDS, VPN_DIR, BACKUP_DIR
-from utils.logger import standard_logger, audit_logger
-from database.storage import load_json, save_json
-from utils.vpn_manager import load_vpn_db, save_vpn_db, revoke_vpn_config
-from handlers.start import get_user_dir
+from config import VPN_DIR
+from repositories.vpn_repository import load_vpn_db, save_vpn_db
+from services.vpn_service import revoke_vpn_config
 from handlers.main_menu import admin_private_only
-from keyboards.inline import get_back_keyboard
+from handlers.common import get_user_dir
+from database.storage import load_json, save_json
+from utils.logger import audit_logger
+
 import os
 import shutil
 from datetime import datetime, timedelta
-
 router = Router()
-logger = standard_logger
-
-
 @router.message(Command("configs"))
 async def cmd_configs(message: types.Message):
     if not await admin_private_only(message):
@@ -25,11 +22,13 @@ async def cmd_configs(message: types.Message):
         return
     
     users_dirs = [d for d in os.listdir(VPN_DIR) if os.path.isdir(os.path.join(VPN_DIR, d))]
+    
     if not users_dirs:
         await message.answer("📭 Нет пользователей с конфигами.")
         return
     
     text = "📂 <b>СПИСОК ВСЕХ КОНФИГОВ</b>\n\n"
+    
     for user_dir in sorted(users_dirs):
         user_path = os.path.join(VPN_DIR, user_dir)
         configs = [f for f in os.listdir(user_path) if f.endswith('.vpn')]
@@ -59,6 +58,7 @@ async def cmd_delconfig(message: types.Message):
     
     username = parts[1]
     filename = parts[2]
+    
     user_dir = os.path.join(VPN_DIR, username)
     file_path = os.path.join(user_dir, filename)
     
@@ -87,6 +87,7 @@ async def cmd_clearuser(message: types.Message):
     
     username = parts[1]
     user_dir = os.path.join(VPN_DIR, username)
+    
     if os.path.exists(user_dir):
         shutil.rmtree(user_dir)
         await message.answer(f"✅ Все конфиги пользователя <b>{username}</b> удалены.", parse_mode="HTML")
@@ -112,6 +113,7 @@ async def cmd_clearproxy(message: types.Message):
     
     username = parts[1]
     user_proxies = load_json("bot_data/user_proxies.json", {})
+    
     found = False
     for uid, data in list(user_proxies.items()):
         if data.get("username") == username or data.get("name") == username:
@@ -148,12 +150,14 @@ async def cmd_permanent(message: types.Message):
     username = parts[1]
     filename = parts[2]
     action = parts[3].lower()
+    
     if action not in ["on", "off"]:
         await message.answer("❌ Действие должно быть <code>on</code> или <code>off</code>", parse_mode="HTML")
         return
     
     vpn_users = load_vpn_db()
     found = False
+    
     for ch, cd in vpn_users.items():
         if cd.get('username') == username and cd.get('active', True):
             user_dir = get_user_dir(username)
@@ -168,8 +172,10 @@ async def cmd_permanent(message: types.Message):
                         new_expires = datetime.now() + timedelta(days=30)
                         cd['expires_at'] = new_expires.isoformat()
                     status_text = f"🔄 Обычный (30 дней) (конфиг: {filename})"
+                
                 vpn_users[ch] = cd
                 save_vpn_db(vpn_users)
+                
                 await message.answer(
                     f"✅ <b>Статус обновлён!</b>\n\n"
                     f"👤 Пользователь: @{username}\n"
@@ -215,18 +221,21 @@ async def cmd_permanent_proxy(message: types.Message):
     
     proxy_name = parts[2]
     action = parts[3].lower()
+    
     if action not in ["on", "off"]:
         await message.answer("❌ Действие должно быть <code>on</code> или <code>off</code>", parse_mode="HTML")
         return
     
     user_proxies = load_json("bot_data/user_proxies.json", {})
     user_id_str = str(target_user_id)
+    
     if user_id_str not in user_proxies:
         await message.answer(f"❌ Пользователь ID {target_user_id} не найден.")
         return
     
     proxies = user_proxies[user_id_str].get("proxies", [])
     found = False
+    
     for proxy in proxies:
         if proxy.get('name') == proxy_name:
             found = True
@@ -238,8 +247,10 @@ async def cmd_permanent_proxy(message: types.Message):
                 if 'issued_at' not in proxy:
                     proxy['issued_at'] = datetime.now().isoformat()
                 status_text = f"🔄 Обычный (30 дней) (прокси: {proxy_name})"
+            
             user_proxies[user_id_str]["proxies"] = proxies
             save_json("bot_data/user_proxies.json", user_proxies)
+            
             await message.answer(
                 f"✅ <b>Статус обновлён!</b>\n\n"
                 f"👤 Пользователь ID: {target_user_id}\n"
@@ -288,8 +299,10 @@ async def cmd_revoke(message: types.Message):
             continue
         if not data.get('active', True):
             continue
-        if key_part and not public_key.startswith(key_part):
-            continue
+        
+        if key_part:
+            if not public_key.startswith(key_part):
+                continue
         
         result = revoke_vpn_config(public_key)
         if result.get('success'):
@@ -421,6 +434,7 @@ async def cmd_deluser(message: types.Message):
         return
     
     username = parts[1].lstrip('@')
+    
     await message.answer(
         f"⚠️ <b>Вы уверены, что хотите удалить пользователя @{username}?</b>\n\n"
         f"Будут удалены:\n"
@@ -492,4 +506,4 @@ async def cmd_deluser_confirm(message: types.Message):
         f"💡 Пользователь может зарегистрироваться заново.",
         parse_mode="HTML"
     )
-    audit_logger.info(f"ACTION:DELUSER | ADMIN:{message.from_user.id} | USER:{username}")
+    

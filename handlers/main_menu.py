@@ -145,22 +145,6 @@ async def menu_help(callback: types.CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "menu_admin_main")
-async def menu_admin_main(callback: types.CallbackQuery):
-    """Админ-панель"""
-    user_id = callback.from_user.id
-    if user_id not in ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    await callback.answer()
-    
-    await callback.message.edit_text(
-        "⚙️ <b>Админ-панель</b>\n\nВыберите раздел:",
-        parse_mode="HTML",
-        reply_markup=get_admin_main_keyboard().as_markup()
-    )
-
-
 # ==========================================
 # ПОМОЩЬ - ИНСТРУКЦИИ
 # ==========================================

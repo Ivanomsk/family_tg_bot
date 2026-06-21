@@ -1,20 +1,14 @@
-from aiogram import Router, types, F
-from config import ADMIN_IDS, ALLOWED_CHAT_ID
-from utils.logger import standard_logger, audit_logger
+from aiogram import Router, F, types
+from config import ADMIN_IDS
 from keyboards.inline import (
-    get_back_keyboard,
     get_news_keyboard,
     get_amnezia_announce_keyboard,
-    get_admin_main_keyboard
+    get_admin_main_keyboard,
 )
-
 router = Router()
-logger = standard_logger
-
-
 @router.callback_query(F.data == "news_start")
 async def news_start(callback: types.CallbackQuery):
-    """Начало создания новости"""
+    """Публикация новости"""
     user_id = callback.from_user.id
     if user_id not in ADMIN_IDS:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
@@ -90,6 +84,8 @@ async def amnezia_publish(callback: types.CallbackQuery):
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
+    from config import ALLOWED_CHAT_ID
+    
     text = (
         "<b>📢 Обновление Amnezia VPN</b>\n\n"
         "Доступна новая версия клиента для всех платформ.\n\n"
@@ -121,3 +117,5 @@ async def amnezia_publish(callback: types.CallbackQuery):
         )
     except Exception as e:
         await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+

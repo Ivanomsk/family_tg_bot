@@ -2,11 +2,30 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN, ADMIN_IDS
-from handlers import main_menu, vpn, proxy, admin, admin_stats, admin_commands, admin_users, admin_backup, admin_news, extend, vpn_admin, errors
+from handlers import (
+    main_menu,
+    vpn,
+    proxy,
+    extend,
+    vpn_admin,
+    errors,
+)
+
+from handlers.admin import (
+    menu,
+    users,
+    vpn as admin_vpn,
+    permanent,
+    backup,
+    news,
+    stats,
+    commands,
+)
+
 from utils.expiry import check_all_vpn_expiry, check_all_proxy_expiry
 from utils.logger import standard_logger, audit_logger
 from utils.notifications import check_and_send_personal_notifications, check_proxy_notifications
-from utils.vpn_manager import delete_expired_vpn
+from services.vpn_service import delete_expired_vpn
 
 logger = standard_logger
 
@@ -92,17 +111,24 @@ async def scheduled_tasks(bot):
 async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
-    
+
+    # основные разделы
     dp.include_router(main_menu.router)
     dp.include_router(vpn_admin.router)
     dp.include_router(vpn.router)
     dp.include_router(proxy.router)
-    dp.include_router(admin.router)
-    dp.include_router(admin_stats.router)
-    dp.include_router(admin_commands.router)
-    dp.include_router(admin_users.router)
-    dp.include_router(admin_backup.router)
-    dp.include_router(admin_news.router)
+
+    # админка
+    dp.include_router(menu.router)
+    dp.include_router(stats.router)
+    dp.include_router(users.router)
+    dp.include_router(admin_vpn.router)
+    dp.include_router(permanent.router)
+    dp.include_router(backup.router)
+    dp.include_router(news.router)
+    dp.include_router(commands.router)
+
+    # прочее
     dp.include_router(extend.router)
     dp.include_router(errors.router)
     

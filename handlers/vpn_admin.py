@@ -1,38 +1,26 @@
 """Админские хендлеры для управления VPN"""
 
 import os
+import tempfile
+
 from aiogram import Router, types, F
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import FSInputFile, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import tempfile
-from aiogram.fsm.context import FSMContext
+
 from states.forms import VpnIssue
-from utils.vpn_manager import (
-    issue_vpn_config, 
-    revoke_vpn_config, 
+from services.vpn_service import (
+    issue_vpn_config,
+    revoke_vpn_config,
     list_vpn_users,
-    test_ssh_connection
+    test_ssh_connection,
 )
 
 from utils.logger import standard_logger, audit_logger
+
 logger = standard_logger
-
-# Загружаем ADMIN_IDS
-from config import ADMIN_IDS
-
 router = Router()
-
-
-def is_admin(user_id: int) -> bool:
-    """Проверка что пользователь - админ"""
-    return user_id in ADMIN_IDS
-
-
-# ==========================================
-# КОМАНДЫ УПРАВЛЕНИЯ VPN
-# ==========================================
-
 @router.message(Command("vpn_issue"))
 async def cmd_vpn_issue(message: types.Message):
     """Выдать VPN конфиг пользователю"""
