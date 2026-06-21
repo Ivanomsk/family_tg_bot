@@ -7,7 +7,6 @@ from handlers import (
     vpn,
     proxy,
     extend,
-    vpn_admin,
     errors,
 )
 
@@ -114,7 +113,6 @@ async def main():
 
     # основные разделы
     dp.include_router(main_menu.router)
-    dp.include_router(vpn_admin.router)
     dp.include_router(vpn.router)
     dp.include_router(proxy.router)
 
