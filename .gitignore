@@ -1,61 +1,15 @@
-# Секреты и конфигурация
-.env
-.env.local
-*.env
-ssh_keys/
-
-# Данные бота (конфиденциально!)
-bot_data/
-!bot_data/.gitkeep
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# Виртуальное окружение
 venv/
-.venv/
-env/
-*.egg-info/
-dist/
-build/
+__pycache__/
+*.pyc
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Данные и логи (они не должны быть в Git)
+bot_data/
+logs/
+ssh_keys/
+.env
 
-# Логи
-*.log
-bot_data/logs/
-bot_data/logs/bot.log
-bot_data/logs/bot.log.*
-
-# OS
+# Системные файлы
 .DS_Store
-Thumbs.db
-
-# Временные файлы
-*.tmp
-*.bak
-
-# Docker
-.dockerignore
-
-# Тесты и покрытие
-.pytest_cache/
-.coverage
-htmlcov/
-coverage.xml
-*.cover
-
-# IDE
-.vscode/
 .idea/
-
-# Временные файлы
-*.tmp
-*.bak
+.vscode/
